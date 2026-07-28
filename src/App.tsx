@@ -376,8 +376,9 @@ export default function App() {
           />
         )}
       </main>
-      <footer className="page-shell border-t border-ink/10 py-8 text-xs text-muted">
-        <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
+      <footer className="page-shell pb-8 pt-12 text-xs text-muted">
+        <FooterBookmark />
+        <div className="mt-7 flex flex-col justify-between gap-4 border-t border-ink/10 pt-6 sm:flex-row sm:items-center">
           <p>Stilla Books · En privat plats för läsning och eftertanke.</p>
           <nav className="flex gap-5" aria-label="Juridisk information">
             <a
@@ -416,9 +417,55 @@ export default function App() {
   );
 }
 
+function FooterBookmark() {
+  return (
+    <svg
+      viewBox="0 0 160 132"
+      className="mx-auto h-[116px] w-[140px] overflow-visible md:h-32 md:w-40"
+      aria-hidden="true"
+    >
+      <g transform="translate(80 66) rotate(-36) translate(-80 -66)">
+        <path
+          d="M68 8 C64 29 74 40 69 59 C64 78 72 93 71 116 L80 106 L89 116 C88 94 96 78 91 59 C86 40 96 29 92 8 C85 5 75 5 68 8 Z"
+          className="fill-paper/40 stroke-ink/55"
+          strokeWidth="1.35"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+        <path
+          d="M79 93 C80 78 77 64 80 50 C82 39 82 30 80 22"
+          className="fill-none stroke-sage"
+          strokeWidth="1.4"
+          strokeLinecap="round"
+        />
+        <path
+          d="M79 77 C73 74 70 69 70 65 C75 65 79 68 80 72 C84 67 88 64 93 64 C92 69 87 73 80 75"
+          className="fill-sage/75"
+        />
+        <path
+          d="M80 57 C75 55 72 51 72 47 C77 47 80 49 81 53 C84 49 88 47 92 48 C91 52 87 56 81 57"
+          className="fill-sage/75"
+        />
+        <path
+          d="M80 40 C76 38 73 35 73 31 C77 31 80 33 81 36 C84 33 87 31 91 32 C90 36 86 39 81 40"
+          className="fill-sage/75"
+        />
+        <g className="fill-sage/85">
+          <ellipse cx="80" cy="18" rx="3.6" ry="6.5" />
+          <ellipse cx="80" cy="18" rx="3.6" ry="6.5" transform="rotate(72 80 18)" />
+          <ellipse cx="80" cy="18" rx="3.6" ry="6.5" transform="rotate(144 80 18)" />
+          <ellipse cx="80" cy="18" rx="3.6" ry="6.5" transform="rotate(216 80 18)" />
+          <ellipse cx="80" cy="18" rx="3.6" ry="6.5" transform="rotate(288 80 18)" />
+          <circle cx="80" cy="18" r="2.2" className="fill-paper" />
+        </g>
+      </g>
+    </svg>
+  );
+}
+
 function TopLine({ value, hasGoal }: { value: number; hasGoal: boolean }) {
   return (
-    <div className="fixed inset-x-0 top-0 z-50 h-11 bg-paper" aria-hidden="true">
+    <div className="paper-surface fixed inset-x-0 top-0 z-50 h-11" aria-hidden="true">
       <svg
         viewBox="0 0 1000 32"
         preserveAspectRatio="none"
