@@ -1,0 +1,46 @@
+# Stilla Books
+
+En lugn, privat läsplats byggd med React, TypeScript, Tailwind och shadcn-kompatibla komponenter.
+
+## Lokal utveckling
+
+```sh
+npm install
+npm run dev
+```
+
+Produktionsbygge:
+
+```sh
+npm run lint
+npm test
+npm run build
+```
+
+## Google Sheets
+
+Appen använder klientbaserad Google OAuth, Google Picker och Google Sheets API. Aktivera Google Sheets API, Google Drive API och Google Picker API i Google Cloud. Lägg den publika webbkonfigurationen i en lokal `.env`:
+
+```text
+VITE_GOOGLE_CLIENT_ID=...
+VITE_GOOGLE_API_KEY=...
+VITE_GOOGLE_APP_ID=...
+```
+
+`VITE_GOOGLE_APP_ID` är projektets numeriska Project number. API-nyckeln ska begränsas till Google Picker API och appens tillåtna webbplatser.
+
+Ingen klienthemlighet ska användas eller checkas in. För GitHub Pages anges samma tre värden som repository variables.
+
+Appen begär endast OAuth-behörigheten `drive.file`. Ett nytt Stilla Books-ark får flikarna `Books` och `Settings`. Efter anslutning läses biblioteket från arket och ändringar sparas tillbaka automatiskt. Webbläsarens lokala lagring fungerar som en lokal kopia och minns vilket ark användaren har valt.
+
+När appen åter får fokus läses arket om, så att ändringar från exempelvis en separat ChatGPT-chatt kan hämtas in. Efter en omladdning behöver användaren aktivt återansluta Google; åtkomsttoken sparas inte permanent i webbläsaren.
+
+## Tester
+
+Vitest täcker centrala statusbyten, dubblettkontroll, konverteringen mellan bokdata och kalkylarksrader samt att rätt status och läsmål skickas till Sheets. GitHub Actions kör lint, tester och produktionsbygge före publicering.
+
+`public/privacy.html` och `public/terms.html` innehåller utkast till de offentliga sidor som länkas från appens sidfot. Kontaktuppgifter och texter ska granskas före publicering.
+
+## Publicering
+
+Workflow-filen i `.github/workflows/deploy-pages.yml` bygger och publicerar `dist` på GitHub Pages när `main` uppdateras. GitHub Pages behöver vara inställt på **GitHub Actions** som källa.
