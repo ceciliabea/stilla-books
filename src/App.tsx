@@ -20,6 +20,12 @@ import { Button } from "./components/ui/button";
 import { demoBooks } from "./data/demo-books";
 import { getStatusChanges, isDuplicateBook } from "./lib/bookState";
 import {
+  clearGoogleAuthorization,
+  loadGoogleAuthorization,
+  storeGoogleAuthorization,
+  type GoogleAuthorization,
+} from "./lib/googleSession";
+import {
   hashForPage,
   pageFromHash,
   type AppPage as Page,
@@ -90,11 +96,18 @@ export default function App() {
   const [sheetConnection, setSheetConnection] = useState<SheetConnection | null>(
     loadSheetConnection,
   );
-  const [googleToken, setGoogleToken] = useState<string | null>(null);
+  const [googleAuthorization, setGoogleAuthorization] =
+    useState<GoogleAuthorization | null>(
+      () => loadGoogleAuthorization(sessionStorage),
+    );
+  const googleToken = googleAuthorization?.accessToken ?? null;
   const [sheetReady, setSheetReady] = useState(false);
   const [syncState, setSyncState] = useState<SyncState>("idle");
   const [syncMessage, setSyncMessage] = useState("");
   const skipNextSheetWrite = useRef(false);
+  const shouldRestoreSheet = useRef(
+    Boolean(sheetConnection && googleAuthorization),
+  );
   const sheetWriteQueue = useRef<Promise<void>>(Promise.resolve());
   const [goal, setGoal] = useState<number | null>(() => {
     const saved = localStorage.getItem("stilla-reading-goal");
@@ -120,6 +133,71 @@ export default function App() {
     if (goal) localStorage.setItem("stilla-reading-goal", String(goal));
     else localStorage.removeItem("stilla-reading-goal");
   }, [goal]);
+
+  useEffect(() => {
+    if (
+      !shouldRestoreSheet.current ||
+      !sheetConnection ||
+      !googleToken
+    ) {
+      return;
+    }
+    shouldRestoreSheet.current = false;
+    let cancelled = false;
+    setSyncState("connecting");
+    setSyncMessage("Återansluter till ditt Google Sheet…");
+
+    readStillaSpreadsheet(googleToken, sheetConnection.spreadsheetId)
+      .then((snapshot) => {
+        if (cancelled) return;
+        skipNextSheetWrite.current = true;
+        setBooks(snapshot.books);
+        setGoal(snapshot.goal);
+        setSheetReady(true);
+        setSyncState("synced");
+        setSyncMessage("Ditt Google Sheet är anslutet.");
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        clearGoogleAuthorization(sessionStorage);
+        setGoogleAuthorization(null);
+        setSyncState("error");
+        setSyncMessage(
+          error instanceof Error
+            ? error.message
+            : "Google-sessionen behöver anslutas igen.",
+        );
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [googleToken, sheetConnection]);
+
+  useEffect(() => {
+    if (!googleAuthorization) return;
+    const refreshIn = Math.max(
+      googleAuthorization.expiresAt - Date.now() - 60_000,
+      0,
+    );
+    const timeout = window.setTimeout(async () => {
+      try {
+        const renewed = await requestGoogleToken("none");
+        storeGoogleAuthorization(sessionStorage, renewed);
+        setGoogleAuthorization(renewed);
+      } catch {
+        clearGoogleAuthorization(sessionStorage);
+        setGoogleAuthorization(null);
+        setSheetReady(false);
+        setSyncState("idle");
+        setSyncMessage(
+          "Google behöver en kort återanslutning för att fortsätta synka.",
+        );
+      }
+    }, refreshIn);
+
+    return () => window.clearTimeout(timeout);
+  }, [googleAuthorization]);
 
   useEffect(() => {
     if (!sheetConnection || !googleToken || !sheetReady) return;
@@ -250,11 +328,17 @@ export default function App() {
     localStorage.setItem("stilla-sheet-connection", JSON.stringify(connection));
   }
 
+  function rememberGoogleAuthorization(authorization: GoogleAuthorization) {
+    storeGoogleAuthorization(sessionStorage, authorization);
+    setGoogleAuthorization(authorization);
+    return authorization.accessToken;
+  }
+
   async function createSheet() {
     setSyncState("connecting");
     setSyncMessage("Öppnar Google…");
     try {
-      const token = await requestGoogleToken();
+      const token = rememberGoogleAuthorization(await requestGoogleToken());
       const result = await createStillaSpreadsheet(token);
       const connection = {
         spreadsheetId: result.spreadsheetId,
@@ -266,7 +350,6 @@ export default function App() {
       await writeStillaSpreadsheet(token, result.spreadsheetId, books, goal);
       skipNextSheetWrite.current = true;
       rememberSheet(connection);
-      setGoogleToken(token);
       setSheetReady(true);
       setSyncState("synced");
       setSyncMessage("Ditt Stilla Books-ark är skapat och anslutet.");
@@ -280,14 +363,13 @@ export default function App() {
     setSyncState("connecting");
     setSyncMessage("Öppnar Google…");
     try {
-      const token = await requestGoogleToken();
+      const token = rememberGoogleAuthorization(await requestGoogleToken());
       const connection = await pickStillaSpreadsheet(token);
       const snapshot = await readStillaSpreadsheet(token, connection.spreadsheetId);
       skipNextSheetWrite.current = true;
       setBooks(snapshot.books);
       setGoal(snapshot.goal);
       rememberSheet(connection);
-      setGoogleToken(token);
       setSheetReady(true);
       setSyncState("synced");
       setSyncMessage("Ditt Google Sheet är anslutet.");
@@ -304,7 +386,7 @@ export default function App() {
     setSyncState("connecting");
     setSyncMessage("Läser från ditt Google Sheet…");
     try {
-      const token = await requestGoogleToken();
+      const token = rememberGoogleAuthorization(await requestGoogleToken());
       const snapshot = await readStillaSpreadsheet(
         token,
         sheetConnection.spreadsheetId,
@@ -312,7 +394,6 @@ export default function App() {
       skipNextSheetWrite.current = true;
       setBooks(snapshot.books);
       setGoal(snapshot.goal);
-      setGoogleToken(token);
       setSheetReady(true);
       setSyncState("synced");
       setSyncMessage("Biblioteket är uppdaterat från Google Sheet.");

@@ -1,9 +1,10 @@
 import type { Book, BookStatus, Feedback } from "../types";
+import type { GoogleAuthorization } from "../lib/googleSession";
 
 const DRIVE_FILE_SCOPE = "https://www.googleapis.com/auth/drive.file";
 const GOOGLE_SHEETS_MIME_TYPE = "application/vnd.google-apps.spreadsheet";
 
-type TokenResponse = { access_token?: string; error?: string };
+type TokenResponse = { access_token?: string; expires_in?: number; error?: string };
 type PickerDocument = { id?: string; name?: string; url?: string };
 
 interface PickerView {
@@ -30,6 +31,7 @@ declare global {
             client_id: string;
             scope: string;
             callback: (response: TokenResponse) => void;
+            error_callback?: (error: { type?: string }) => void;
           }): { requestAccessToken: (options?: { prompt?: string }) => void };
         };
       };
@@ -126,18 +128,28 @@ export function isGoogleConfigured() {
   );
 }
 
-export async function requestGoogleToken(prompt: "" | "consent" = "") {
+export async function requestGoogleToken(
+  prompt: "" | "consent" | "none" = "",
+): Promise<GoogleAuthorization> {
   const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID;
   if (!clientId) throw new Error("Google OAuth-klient-ID saknas.");
   await loadGoogleIdentity();
-  return new Promise<string>((resolve, reject) => {
+  return new Promise<GoogleAuthorization>((resolve, reject) => {
     const client = window.google!.accounts.oauth2.initTokenClient({
       client_id: clientId,
       scope: DRIVE_FILE_SCOPE,
       callback: (response) => {
-        if (response.access_token) resolve(response.access_token);
-        else reject(new Error(response.error ?? "Google-inloggningen avbröts."));
+        if (response.access_token) {
+          resolve({
+            accessToken: response.access_token,
+            expiresAt: Date.now() + (response.expires_in ?? 3600) * 1000,
+          });
+        } else {
+          reject(new Error(response.error ?? "Google-inloggningen avbröts."));
+        }
       },
+      error_callback: (error) =>
+        reject(new Error(error.type ?? "Google-inloggningen kunde inte öppnas.")),
     });
     client.requestAccessToken({ prompt });
   });
