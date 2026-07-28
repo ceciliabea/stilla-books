@@ -126,7 +126,7 @@ export function isGoogleConfigured() {
   );
 }
 
-export async function requestGoogleToken(prompt: "" | "consent" = "consent") {
+export async function requestGoogleToken(prompt: "" | "consent" = "") {
   const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID;
   if (!clientId) throw new Error("Google OAuth-klient-ID saknas.");
   await loadGoogleIdentity();
