@@ -19,6 +19,11 @@ import { BookCover } from "./components/BookCover";
 import { Button } from "./components/ui/button";
 import { demoBooks } from "./data/demo-books";
 import { getStatusChanges, isDuplicateBook } from "./lib/bookState";
+import {
+  hashForPage,
+  pageFromHash,
+  type AppPage as Page,
+} from "./lib/pageRouting";
 import { cn } from "./lib/utils";
 import {
   createStillaSpreadsheet,
@@ -30,7 +35,6 @@ import {
 } from "./services/googleSheets";
 import type { Book, BookStatus, Feedback } from "./types";
 
-type Page = "home" | "library" | "add" | "settings";
 type SyncState = "idle" | "connecting" | "syncing" | "synced" | "error";
 const CURRENT_YEAR = new Date().getFullYear();
 
@@ -77,7 +81,7 @@ function loadSheetConnection(): SheetConnection | null {
 }
 
 export default function App() {
-  const [page, setPage] = useState<Page>("home");
+  const [page, setPage] = useState<Page>(() => pageFromHash(window.location.hash));
   const [books, setBooks] = useState<Book[]>(loadBooks);
   const [selectedBook, setSelectedBook] = useState<Book | null>(null);
   const [celebrating, setCelebrating] = useState<Book | null>(null);
@@ -100,6 +104,17 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem("stilla-demo-books", JSON.stringify(books));
   }, [books]);
+
+  useEffect(() => {
+    function handleHashChange() {
+      setPage(pageFromHash(window.location.hash));
+      setMobileNav(false);
+      setSelectedBook(null);
+    }
+
+    window.addEventListener("hashchange", handleHashChange);
+    return () => window.removeEventListener("hashchange", handleHashChange);
+  }, []);
 
   useEffect(() => {
     if (goal) localStorage.setItem("stilla-reading-goal", String(goal));
@@ -224,6 +239,8 @@ export default function App() {
 
   function navigate(next: Page) {
     setPage(next);
+    const nextHash = hashForPage(next);
+    if (window.location.hash !== nextHash) window.location.hash = nextHash;
     setMobileNav(false);
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
@@ -356,7 +373,7 @@ export default function App() {
             existingBooks={books}
             onAdd={(book) => {
               setBooks((current) => [...current, book]);
-              setPage("library");
+              navigate("library");
             }}
           />
         )}
