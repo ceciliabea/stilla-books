@@ -13,6 +13,17 @@ interface OpenLibrarySearchResult {
 export type RefreshedBookMetadata = Pick<Book, "externalId" | "title" | "authors"> &
   Partial<Pick<Book, "coverUrl" | "description" | "genres" | "language">>;
 
+export interface BookMetadataCandidate {
+  key: string;
+  title: string;
+  authors: string[];
+  coverUrl?: string;
+  firstPublishYear?: number;
+  subjects: string[];
+  languages: string[];
+  safeMatch: boolean;
+}
+
 function normalize(value: string) {
   return value
     .normalize("NFD")
@@ -92,9 +103,9 @@ export function shortenDescription(value: string) {
     : cleaned;
 }
 
-export async function refreshBookMetadata(
+export async function findBookMetadataCandidates(
   book: Book,
-): Promise<RefreshedBookMetadata | null> {
+): Promise<BookMetadataCandidate[]> {
   const params = new URLSearchParams({
     title: book.title,
     author: book.authors[0] ?? "",
@@ -110,21 +121,38 @@ export async function refreshBookMetadata(
   }
 
   const data = (await response.json()) as { docs?: OpenLibrarySearchResult[] };
-  const ranked = (data.docs ?? [])
-    .filter((result) => isSafeMatch(result, book))
+  return (data.docs ?? [])
     .map((result) => ({ result, score: scoreResult(result, book) }))
-    .sort((a, b) => b.score - a.score);
-  const best = ranked[0];
-  if (!best) return null;
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 6)
+    .map(({ result }) => ({
+      key: result.key,
+      title: result.title,
+      authors: result.author_name?.slice(0, 3) ?? [],
+      ...(result.cover_i && result.cover_i > 0
+        ? {
+            coverUrl: `https://covers.openlibrary.org/b/id/${result.cover_i}-L.jpg`,
+          }
+        : {}),
+      firstPublishYear: result.first_publish_year,
+      subjects: result.subject?.slice(0, 3) ?? [],
+      languages: result.language ?? [],
+      safeMatch: isSafeMatch(result, book),
+    }));
+}
 
-  let description = best.result.first_publish_year
-    ? `Först utgiven ${best.result.first_publish_year}.`
+export async function refreshBookMetadataFromCandidate(
+  book: Book,
+  candidate: BookMetadataCandidate,
+): Promise<RefreshedBookMetadata> {
+  let description = candidate.firstPublishYear
+    ? `Först utgiven ${candidate.firstPublishYear}.`
     : undefined;
-  let genres = best.result.subject?.slice(0, 3);
+  let genres = candidate.subjects;
 
   try {
     const detailResponse = await fetch(
-      `https://openlibrary.org${best.result.key}.json`,
+      `https://openlibrary.org${candidate.key}.json`,
     );
     if (detailResponse.ok) {
       const details = (await detailResponse.json()) as {
@@ -146,25 +174,29 @@ export async function refreshBookMetadata(
 
   const wantedLanguage = languageCode(book.language);
   const matchedLanguage =
-    wantedLanguage && best.result.language?.includes(wantedLanguage)
+    wantedLanguage && candidate.languages.includes(wantedLanguage)
       ? wantedLanguage === "swe"
         ? "sv"
         : wantedLanguage
-      : best.result.language?.[0];
+      : candidate.languages[0];
 
   return {
-    externalId: best.result.key,
-    title: best.result.title,
-    authors:
-      best.result.author_name?.slice(0, 3) ??
-      book.authors,
-    ...(best.result.cover_i && best.result.cover_i > 0
-      ? {
-          coverUrl: `https://covers.openlibrary.org/b/id/${best.result.cover_i}-L.jpg`,
-        }
-      : {}),
+    externalId: candidate.key,
+    title: candidate.title,
+    authors: candidate.authors.length ? candidate.authors : book.authors,
+    ...(candidate.coverUrl ? { coverUrl: candidate.coverUrl } : {}),
     ...(description ? { description } : {}),
     ...(genres?.length ? { genres } : {}),
     ...(matchedLanguage ? { language: matchedLanguage } : {}),
   };
+}
+
+export async function refreshBookMetadata(
+  book: Book,
+): Promise<RefreshedBookMetadata | null> {
+  const candidates = await findBookMetadataCandidates(book);
+  const safeCandidate = candidates.find((candidate) => candidate.safeMatch);
+  return safeCandidate
+    ? refreshBookMetadataFromCandidate(book, safeCandidate)
+    : null;
 }

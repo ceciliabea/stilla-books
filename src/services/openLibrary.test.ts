@@ -1,6 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Book } from "../types";
-import { refreshBookMetadata } from "./openLibrary";
+import {
+  findBookMetadataCandidates,
+  refreshBookMetadata,
+} from "./openLibrary";
 
 const book: Book = {
   id: "book-1",
@@ -106,5 +109,38 @@ describe("uppdatering från Open Library", () => {
     );
 
     await expect(refreshBookMetadata(book)).resolves.toBeNull();
+  });
+
+  it("returnerar osäkra alternativ utan att applicera dem", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          docs: [
+            {
+              key: "/works/OL-OTHER",
+              title: "The Details",
+              author_name: ["Ia Genberg"],
+              cover_i: 30,
+              first_publish_year: 2022,
+              language: ["eng"],
+            },
+          ],
+        }),
+      }),
+    );
+
+    await expect(findBookMetadataCandidates(book)).resolves.toEqual([
+      expect.objectContaining({
+        key: "/works/OL-OTHER",
+        title: "The Details",
+        authors: ["Ia Genberg"],
+        coverUrl: "https://covers.openlibrary.org/b/id/30-L.jpg",
+        firstPublishYear: 2022,
+        languages: ["eng"],
+        safeMatch: false,
+      }),
+    ]);
   });
 });

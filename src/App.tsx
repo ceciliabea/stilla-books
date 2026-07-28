@@ -43,8 +43,11 @@ import {
   writeStillaSpreadsheet,
 } from "./services/googleSheets";
 import {
+  findBookMetadataCandidates,
   refreshBookMetadata,
+  refreshBookMetadataFromCandidate,
   shortenDescription,
+  type BookMetadataCandidate,
 } from "./services/openLibrary";
 import type { Book, BookStatus, Feedback } from "./types";
 
@@ -81,6 +84,14 @@ const languageOptions = [
   { value: "spa", label: "Spanska" },
   { value: "ita", label: "Italienska" },
 ] as const;
+
+function languageLabel(code: string) {
+  const normalized = code === "swe" ? "sv" : code;
+  return (
+    languageOptions.find((language) => language.value === normalized)?.label ??
+    code
+  );
+}
 
 function loadBooks() {
   try {
@@ -366,10 +377,27 @@ export default function App() {
   }
 
   async function refreshOneBook(book: Book) {
-    const metadata = await refreshBookMetadata(book);
-    if (!metadata) return "not_found" as const;
+    const candidates = await findBookMetadataCandidates(book);
+    const safeCandidate = candidates.find((candidate) => candidate.safeMatch);
+    if (!safeCandidate) {
+      return { status: "not_found" as const, candidates };
+    }
+    const metadata = await refreshBookMetadataFromCandidate(
+      book,
+      safeCandidate,
+    );
     const saved = await updateBook(book.id, metadata);
-    return saved ? ("updated" as const) : ("error" as const);
+    return saved
+      ? { status: "updated" as const, candidates: [] }
+      : { status: "error" as const, candidates: [] };
+  }
+
+  async function chooseBookCandidate(
+    book: Book,
+    candidate: BookMetadataCandidate,
+  ) {
+    const metadata = await refreshBookMetadataFromCandidate(book, candidate);
+    return updateBook(book.id, metadata);
   }
 
   async function refreshMissingCovers() {
@@ -671,6 +699,7 @@ export default function App() {
         changeStatus={changeStatus}
         updateBook={updateBook}
         refreshBook={refreshOneBook}
+        chooseBookCandidate={chooseBookCandidate}
       />
       <Celebration
         book={celebrating}
@@ -1401,6 +1430,7 @@ function BookPanel({
   changeStatus,
   updateBook,
   refreshBook,
+  chooseBookCandidate,
 }: {
   book: Book | null;
   onClose: () => void;
@@ -1408,10 +1438,21 @@ function BookPanel({
   updateBook: (id: string, changes: Partial<Book>) => Promise<boolean>;
   refreshBook: (
     book: Book,
-  ) => Promise<"updated" | "not_found" | "error">;
+  ) => Promise<{
+    status: "updated" | "not_found" | "error";
+    candidates: BookMetadataCandidate[];
+  }>;
+  chooseBookCandidate: (
+    book: Book,
+    candidate: BookMetadataCandidate,
+  ) => Promise<boolean>;
 }) {
   const [refreshing, setRefreshing] = useState(false);
   const [refreshMessage, setRefreshMessage] = useState("");
+  const [refreshCandidates, setRefreshCandidates] = useState<
+    BookMetadataCandidate[]
+  >([]);
+  const [choosingCandidate, setChoosingCandidate] = useState("");
   const [editing, setEditing] = useState(false);
   const [editMessage, setEditMessage] = useState("");
   const [draft, setDraft] = useState<BookEditDraft>({
@@ -1427,6 +1468,8 @@ function BookPanel({
   useEffect(() => {
     setRefreshing(false);
     setRefreshMessage("");
+    setRefreshCandidates([]);
+    setChoosingCandidate("");
     setEditing(false);
     setEditMessage("");
   }, [book?.id]);
@@ -1490,13 +1533,17 @@ function BookPanel({
     if (!book) return;
     setRefreshing(true);
     setRefreshMessage("");
+    setRefreshCandidates([]);
     try {
       const result = await refreshBook(book);
+      setRefreshCandidates(result.candidates);
       setRefreshMessage(
-        result === "updated"
+        result.status === "updated"
           ? "Bokinformationen är uppdaterad."
-          : result === "not_found"
-            ? "Ingen säker katalogträff hittades. Informationen lämnades oförändrad."
+          : result.status === "not_found" && result.candidates.length > 0
+            ? "Ingen säker matchning hittades. Välj den utgåva som stämmer."
+            : result.status === "not_found"
+              ? "Bokkatalogen hittade inga alternativ."
             : "Informationen kunde inte sparas i Google Sheet.",
       );
     } catch (error) {
@@ -1507,6 +1554,29 @@ function BookPanel({
       );
     } finally {
       setRefreshing(false);
+    }
+  }
+
+  async function handleCandidateChoice(candidate: BookMetadataCandidate) {
+    if (!book) return;
+    setChoosingCandidate(candidate.key);
+    setRefreshMessage("");
+    try {
+      const saved = await chooseBookCandidate(book, candidate);
+      if (saved) {
+        setRefreshCandidates([]);
+        setRefreshMessage("Den valda bokinformationen är uppdaterad.");
+      } else {
+        setRefreshMessage("Informationen kunde inte sparas i Google Sheet.");
+      }
+    } catch (error) {
+      setRefreshMessage(
+        error instanceof Error
+          ? error.message
+          : "Bokinformationen kunde inte hämtas just nu.",
+      );
+    } finally {
+      setChoosingCandidate("");
     }
   }
 
@@ -1589,6 +1659,62 @@ function BookPanel({
                           >
                             {refreshMessage}
                           </p>
+                        )}
+                        {refreshCandidates.length > 0 && (
+                          <div className="mt-5 divide-y divide-ink/10 border-y border-ink/10">
+                            {refreshCandidates.map((candidate) => {
+                              const details = [
+                                candidate.firstPublishYear,
+                                ...candidate.languages
+                                  .slice(0, 2)
+                                  .map(languageLabel),
+                              ].filter(Boolean);
+                              return (
+                                <article
+                                  key={candidate.key}
+                                  className="flex items-center gap-4 py-4"
+                                >
+                                  {candidate.coverUrl ? (
+                                    <img
+                                      src={candidate.coverUrl}
+                                      alt=""
+                                      className="aspect-[2/3] w-12 shrink-0 rounded-[2px] object-cover"
+                                    />
+                                  ) : (
+                                    <div className="flex aspect-[2/3] w-12 shrink-0 items-center justify-center rounded-[2px] bg-paper-soft">
+                                      <BookOpen className="size-4 stroke-[1] text-muted" />
+                                    </div>
+                                  )}
+                                  <div className="min-w-0 flex-1">
+                                    <p className="font-serif text-lg leading-tight">
+                                      {candidate.title}
+                                    </p>
+                                    <p className="mt-1 text-xs leading-relaxed text-muted">
+                                      {candidate.authors.join(", ") ||
+                                        "Okänd författare"}
+                                    </p>
+                                    {details.length > 0 && (
+                                      <p className="mt-1 text-[11px] text-muted">
+                                        {details.join(" · ")}
+                                      </p>
+                                    )}
+                                  </div>
+                                  <Button
+                                    variant="secondary"
+                                    className="shrink-0"
+                                    disabled={Boolean(choosingCandidate)}
+                                    onClick={() =>
+                                      handleCandidateChoice(candidate)
+                                    }
+                                  >
+                                    {choosingCandidate === candidate.key
+                                      ? "Hämtar…"
+                                      : "Välj"}
+                                  </Button>
+                                </article>
+                              );
+                            })}
+                          </div>
                         )}
                       </div>
                       <div className="mt-8 flex flex-wrap gap-2">
