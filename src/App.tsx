@@ -605,13 +605,15 @@ function HomePage({
           )}
         />
       )}
-      <BookRow
-        title="Väntar på att bli öppnade"
-        books={wantToRead.slice(0, 4)}
-        openBook={openBook}
-        linkLabel="Se hela biblioteket"
-        onLink={() => navigate("library")}
-      />
+      {wantToRead.length > 0 && (
+        <BookRow
+          title="Väntar på att bli öppnade"
+          books={wantToRead.slice(0, 4)}
+          openBook={openBook}
+          linkLabel="Se hela biblioteket"
+          onLink={() => navigate("library")}
+        />
+      )}
     </div>
   );
 }
