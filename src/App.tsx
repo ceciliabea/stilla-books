@@ -281,38 +281,94 @@ export default function App() {
       book.finishedAt?.startsWith(String(CURRENT_YEAR)),
   ).length;
 
-  function updateBook(id: string, changes: Partial<Book>) {
-    setBooks((current) =>
-      current.map((book) =>
-        book.id === id
-          ? { ...book, ...changes, updatedAt: new Date().toISOString().slice(0, 10) }
-          : changes.isFeaturedReading
-            ? { ...book, isFeaturedReading: false }
-            : book,
-      ),
-    );
-    setSelectedBook((current) =>
-      current?.id === id ? { ...current, ...changes } : current,
-    );
-  }
-
-  function changeStatus(book: Book, status: BookStatus) {
-    const changes = getStatusChanges(
-      book,
-      status,
-      reading.some((readingBook) => readingBook.id !== book.id),
-      new Date().toISOString().slice(0, 10),
-    );
-    if (status === "read") {
-      setSelectedBook(null);
-      window.setTimeout(() => setCelebrating({ ...book, ...changes }), 180);
+  async function withWritableSheet(change: () => void) {
+    if (!sheetConnection) {
+      setSyncState("error");
+      setSyncMessage(
+        "Välj eller skapa ett Google Sheet innan du sparar ändringar.",
+      );
+      navigate("settings");
+      return false;
     }
-    updateBook(book.id, changes);
+
+    if (!googleToken || !sheetReady) {
+      setSyncState("connecting");
+      setSyncMessage("Återansluter till Google innan ändringen sparas…");
+      try {
+        const token = rememberGoogleAuthorization(await requestGoogleToken());
+        const snapshot = await readStillaSpreadsheet(
+          token,
+          sheetConnection.spreadsheetId,
+        );
+        skipNextSheetWrite.current = true;
+        setBooks(snapshot.books);
+        setGoal(snapshot.goal);
+        setSheetReady(true);
+      } catch (error) {
+        clearGoogleAuthorization(sessionStorage);
+        setGoogleAuthorization(null);
+        setSheetReady(false);
+        setSyncState("error");
+        setSyncMessage(
+          error instanceof Error
+            ? error.message
+            : "Google Sheet kunde inte anslutas. Ändringen sparades inte.",
+        );
+        return false;
+      }
+    }
+
+    skipNextSheetWrite.current = false;
+    change();
+    setSyncState("syncing");
+    setSyncMessage("Sparar stilla i ditt Google Sheet…");
+    return true;
   }
 
-  function setFeedback(book: Book, feedback: Feedback) {
-    updateBook(book.id, { feedback });
-    setCelebrating(null);
+  async function updateBook(id: string, changes: Partial<Book>) {
+    return withWritableSheet(() => {
+      setBooks((current) =>
+        current.map((book) =>
+          book.id === id
+            ? { ...book, ...changes, updatedAt: new Date().toISOString().slice(0, 10) }
+            : changes.isFeaturedReading
+              ? { ...book, isFeaturedReading: false }
+              : book,
+        ),
+      );
+      setSelectedBook((current) =>
+        current?.id === id ? { ...current, ...changes } : current,
+      );
+    });
+  }
+
+  async function changeStatus(book: Book, status: BookStatus) {
+    return withWritableSheet(() => {
+      const changes = getStatusChanges(
+        book,
+        status,
+        reading.some((readingBook) => readingBook.id !== book.id),
+        new Date().toISOString().slice(0, 10),
+      );
+      if (status === "read") {
+        setSelectedBook(null);
+        window.setTimeout(() => setCelebrating({ ...book, ...changes }), 180);
+      }
+      setBooks((current) =>
+        current.map((currentBook) =>
+          currentBook.id === book.id
+            ? { ...currentBook, ...changes }
+            : changes.isFeaturedReading
+              ? { ...currentBook, isFeaturedReading: false }
+              : currentBook,
+        ),
+      );
+    });
+  }
+
+  async function setFeedback(book: Book, feedback: Feedback) {
+    const saved = await updateBook(book.id, { feedback });
+    if (saved) setCelebrating(null);
   }
 
   function navigate(next: Page) {
@@ -452,16 +508,20 @@ export default function App() {
         {page === "add" && (
           <AddBookPage
             existingBooks={books}
-            onAdd={(book) => {
-              setBooks((current) => [...current, book]);
-              navigate("library");
-            }}
+            onAdd={(book) =>
+              withWritableSheet(() => {
+                setBooks((current) => [...current, book]);
+                navigate("library");
+              })
+            }
           />
         )}
         {page === "settings" && (
           <SettingsPage
             goal={goal}
-            setGoal={setGoal}
+            setGoal={(nextGoal) => {
+              void withWritableSheet(() => setGoal(nextGoal));
+            }}
             connection={sheetConnection}
             configured={isGoogleConfigured()}
             syncState={syncState}
@@ -902,7 +962,7 @@ function AddBookPage({
   onAdd,
 }: {
   existingBooks: Book[];
-  onAdd: (book: Book) => void;
+  onAdd: (book: Book) => Promise<boolean>;
 }) {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<SearchResult[]>([]);
@@ -983,7 +1043,12 @@ function AddBookPage({
       updatedAt: today,
       coverTone: "sage",
     };
-    onAdd(candidate);
+    const saved = await onAdd(candidate);
+    if (!saved) {
+      setError(
+        "Boken lades inte till eftersom Google Sheet inte kunde anslutas.",
+      );
+    }
     setAddingKey("");
   }
 
@@ -1187,8 +1252,8 @@ function BookPanel({
 }: {
   book: Book | null;
   onClose: () => void;
-  changeStatus: (book: Book, status: BookStatus) => void;
-  updateBook: (id: string, changes: Partial<Book>) => void;
+  changeStatus: (book: Book, status: BookStatus) => Promise<boolean>;
+  updateBook: (id: string, changes: Partial<Book>) => Promise<boolean>;
 }) {
   return (
     <Dialog.Root open={Boolean(book)} onOpenChange={(open) => !open && onClose()}>
@@ -1223,10 +1288,10 @@ function BookPanel({
                   )}
                   <button
                     className="mt-10 self-start text-xs text-muted underline decoration-ink/20 underline-offset-4 hover:text-ink"
-                    onClick={() => {
+                    onClick={async () => {
                       if (window.confirm("Ta bort boken från ditt bibliotek? Den kan återställas senare.")) {
-                        updateBook(book.id, { archived: true });
-                        onClose();
+                        const saved = await updateBook(book.id, { archived: true });
+                        if (saved) onClose();
                       }
                     }}
                   >
