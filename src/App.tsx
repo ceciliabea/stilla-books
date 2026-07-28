@@ -69,6 +69,19 @@ const feedbackMeta: Record<Feedback, { label: string; icon: typeof Heart }> = {
   loved: { label: "Älskade", icon: Heart },
 };
 
+const languageOptions = [
+  { value: "sv", label: "Svenska" },
+  { value: "eng", label: "Engelska" },
+  { value: "nor", label: "Norska" },
+  { value: "dan", label: "Danska" },
+  { value: "fin", label: "Finska" },
+  { value: "isl", label: "Isländska" },
+  { value: "deu", label: "Tyska" },
+  { value: "fra", label: "Franska" },
+  { value: "spa", label: "Spanska" },
+  { value: "ita", label: "Italienska" },
+] as const;
+
 function loadBooks() {
   try {
     const saved = localStorage.getItem("stilla-demo-books");
@@ -1375,6 +1388,7 @@ function SettingsPage({
 interface BookEditDraft {
   title: string;
   authors: string;
+  coverUrl: string;
   description: string;
   genres: string;
   language: string;
@@ -1403,6 +1417,7 @@ function BookPanel({
   const [draft, setDraft] = useState<BookEditDraft>({
     title: "",
     authors: "",
+    coverUrl: "",
     description: "",
     genres: "",
     language: "",
@@ -1421,6 +1436,7 @@ function BookPanel({
     setDraft({
       title: book.title,
       authors: book.authors.join(", "),
+      coverUrl: book.coverUrl ?? "",
       description: book.description,
       genres: book.genres.join(", "),
       language: book.language ?? "",
@@ -1442,10 +1458,16 @@ function BookPanel({
       setEditMessage("Titel och minst en författare behöver finnas.");
       return;
     }
+    const coverUrl = draft.coverUrl.trim();
+    if (coverUrl && !coverUrl.toLocaleLowerCase("sv").startsWith("https://")) {
+      setEditMessage("Länken till omslaget behöver börja med https://.");
+      return;
+    }
 
     const saved = await updateBook(book.id, {
       title,
       authors,
+      coverUrl: coverUrl || undefined,
       description: draft.description.trim(),
       genres: draft.genres
         .split(",")
@@ -1666,6 +1688,35 @@ function BookEditForm({
             }
           />
         </label>
+        <label className="text-xs tracking-wide text-muted">
+          Eget omslag
+          <input
+            type="url"
+            inputMode="url"
+            className="edit-field"
+            value={draft.coverUrl}
+            onChange={(event) =>
+              setDraft((current) => ({
+                ...current,
+                coverUrl: event.target.value,
+              }))
+            }
+            placeholder="https://exempel.se/omslag.jpg"
+          />
+          <span className="mt-2 block leading-relaxed">
+            Klistra in en direktlänk till bilden. Lämna tomt för Stillas illustrerade omslag.
+          </span>
+        </label>
+        {draft.coverUrl.toLocaleLowerCase("sv").startsWith("https://") && (
+          <div>
+            <p className="text-xs tracking-wide text-muted">Förhandsvisning</p>
+            <img
+              src={draft.coverUrl}
+              alt="Förhandsvisning av eget omslag"
+              className="mt-2 aspect-[2/3] w-20 rounded-[3px] object-cover shadow-[0_8px_20px_rgba(46,46,44,0.1)]"
+            />
+          </div>
+        )}
         <div className="grid gap-5 sm:grid-cols-2">
           <label className="text-xs tracking-wide text-muted">
             Genrer
@@ -1683,7 +1734,7 @@ function BookEditForm({
           </label>
           <label className="text-xs tracking-wide text-muted">
             Språk
-            <input
+            <select
               className="edit-field"
               value={draft.language}
               onChange={(event) =>
@@ -1692,8 +1743,22 @@ function BookEditForm({
                   language: event.target.value,
                 }))
               }
-              placeholder="sv"
-            />
+            >
+              <option value="">Ej angivet</option>
+              {draft.language &&
+                !languageOptions.some(
+                  (language) => language.value === draft.language,
+                ) && (
+                  <option value={draft.language}>
+                    Annat ({draft.language})
+                  </option>
+                )}
+              {languageOptions.map((language) => (
+                <option key={language.value} value={language.value}>
+                  {language.label}
+                </option>
+              ))}
+            </select>
           </label>
         </div>
         {book.status === "read" && (
