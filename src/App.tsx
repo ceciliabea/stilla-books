@@ -418,17 +418,21 @@ export default function App() {
 
 function TopLine({ value, hasGoal }: { value: number; hasGoal: boolean }) {
   return (
-    <div className="fixed inset-x-0 top-0 z-50 h-9 bg-paper px-4 pt-2 md:px-7" aria-hidden="true">
-      <svg viewBox="0 0 1000 24" preserveAspectRatio="none" className="absolute bottom-1.5 left-0 h-6 w-[calc(100%-3.75rem)] overflow-visible">
+    <div className="fixed inset-x-0 top-0 z-50 h-11 bg-paper" aria-hidden="true">
+      <svg
+        viewBox="0 0 1000 32"
+        preserveAspectRatio="none"
+        className="absolute left-0 top-0 h-8 w-[calc(100%-5rem)] overflow-visible md:w-[calc(100%-5.75rem)]"
+      >
         <path
-          d="M0 14 C140 12, 250 16, 380 13 S650 15, 815 13 S930 14, 1000 13"
+          d="M0 15 C140 13, 250 17, 380 14 S650 16, 815 14 S930 15, 1000 15"
           pathLength="1"
           className="line-draw fill-none stroke-ink/25"
           strokeWidth="1"
         />
         {hasGoal && (
           <path
-            d="M0 14 C140 12, 250 16, 380 13 S650 15, 815 13 S930 14, 1000 13"
+            d="M0 15 C140 13, 250 17, 380 14 S650 16, 815 14 S930 15, 1000 15"
             pathLength="1"
             className="line-draw fill-none stroke-gold"
             strokeWidth="1.5"
@@ -436,13 +440,32 @@ function TopLine({ value, hasGoal }: { value: number; hasGoal: boolean }) {
           />
         )}
       </svg>
-      <svg viewBox="0 0 42 26" className="absolute bottom-1 right-4 h-[26px] w-[42px] overflow-visible md:right-7">
+      <svg
+        viewBox="0 0 64 44"
+        className="absolute right-4 top-0 h-11 w-16 overflow-visible md:right-7"
+      >
         <path
-          d="M0 14 C4 14 6 13 9 12 C14 8 20 8 21 11 L21 22 C18 19 13 18 8 20 C5 21 2 20 0 19 M21 11 C23 8 29 8 34 11 C37 13 39 14 42 14 M21 11 L21 22 C24 19 29 18 34 20 C37 21 40 20 42 19 L42 14"
-          className="book-line fill-none stroke-ink/50"
-          strokeWidth="1.15"
+          d="M0 15 C3 15 5.5 15.3 8 16"
+          className="line-draw fill-none stroke-ink/25"
+          strokeWidth="1"
+          strokeLinecap="round"
+        />
+        <path
+          d="M8 16 C8.8 11 9 8.5 12 7 C18 4.5 26 6.2 31 12.5 L31 30.5 C24 25.5 15 25 7 29 L8 16 M31 12.5 C36 6.2 44 4.5 50 7 C53 8.5 53.2 11 54 16 L55 29 C47 25 38 25.5 31 30.5 M7 29 C15 27 24 27.5 31 33 C38 27.5 47 27 55 29"
+          className="book-line fill-none stroke-ink/60"
+          strokeWidth="1.35"
           strokeLinecap="round"
           strokeLinejoin="round"
+        />
+        <path
+          d="M31 30.5 C31 33 32 34 34 34.5 C36 35 36.5 36 36 38"
+          className="fill-none stroke-ink/60"
+          strokeWidth="1.35"
+          strokeLinecap="round"
+        />
+        <path
+          d="M34.7 37.5 H38.2 V43 L36.45 41.2 L34.7 43 Z"
+          className="fill-sage"
         />
       </svg>
     </div>
