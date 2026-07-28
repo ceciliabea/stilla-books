@@ -374,30 +374,97 @@ export async function writeStillaSpreadsheet(
   goal: number | null,
 ) {
   const encodedId = encodeURIComponent(spreadsheetId);
-  await googleRequest(
-    `https://sheets.googleapis.com/v4/spreadsheets/${encodedId}/values:batchClear`,
+  const current = await googleRequest<{
+    valueRanges?: { values?: string[][] }[];
+  }>(
+    `https://sheets.googleapis.com/v4/spreadsheets/${encodedId}/values:batchGet?ranges=Books!A1:P&ranges=Settings!A1:B`,
     token,
-    {
-      method: "POST",
-      body: JSON.stringify({ ranges: ["Books!A2:P", "Settings!A2:B"] }),
-    },
   );
 
-  const data: { range: string; majorDimension: "ROWS"; values: (string | boolean | number)[][] }[] = [];
-  if (books.length) {
+  const bookRows = current.valueRanges?.[0]?.values ?? [];
+  const settingRows = current.valueRanges?.[1]?.values ?? [];
+  const bookHeaders = bookRows[0] ?? [];
+  const settingHeaders = settingRows[0] ?? [];
+  if (!BOOK_HEADERS.every((header, index) => bookHeaders[index] === header)) {
+    throw new Error(
+      "Arket har inte Stilla Books struktur. Synkningen avbröts utan att ändra någon data.",
+    );
+  }
+  if (
+    !SETTINGS_HEADERS.every(
+      (header, index) => settingHeaders[index] === header,
+    )
+  ) {
+    throw new Error(
+      "Inställningsfliken har inte Stilla Books struktur. Synkningen avbröts utan att ändra någon data.",
+    );
+  }
+
+  const data: {
+    range: string;
+    majorDimension: "ROWS";
+    values: (string | boolean | number)[][];
+  }[] = [];
+  const remoteById = new Map<
+    string,
+    { book: Book; rowNumber: number }
+  >();
+  bookRows.slice(1).forEach((row, index) => {
+    const remoteBook = sheetRowToBook(row);
+    if (remoteBook && !remoteById.has(remoteBook.id)) {
+      remoteById.set(remoteBook.id, {
+        book: remoteBook,
+        rowNumber: index + 2,
+      });
+    }
+  });
+
+  let nextBookRow = Math.max(bookRows.length + 1, 2);
+  books.forEach((book) => {
+    const remote = remoteById.get(book.id);
+    if (remote) {
+      const localUpdatedAt = Date.parse(book.updatedAt);
+      const remoteUpdatedAt = Date.parse(remote.book.updatedAt);
+      const localIsNewer =
+        Number.isFinite(localUpdatedAt) &&
+        (!Number.isFinite(remoteUpdatedAt) ||
+          localUpdatedAt > remoteUpdatedAt);
+      if (!localIsNewer) return;
+      data.push({
+        range: `Books!A${remote.rowNumber}:P${remote.rowNumber}`,
+        majorDimension: "ROWS",
+        values: [bookToSheetRow(book)],
+      });
+      return;
+    }
+
     data.push({
-      range: `Books!A2:P${books.length + 1}`,
+      range: `Books!A${nextBookRow}:P${nextBookRow}`,
       majorDimension: "ROWS",
-      values: books.map(bookToSheetRow),
+      values: [bookToSheetRow(book)],
+    });
+    nextBookRow += 1;
+  });
+
+  const currentYear = String(new Date().getFullYear());
+  const goalRowIndex = settingRows
+    .slice(1)
+    .findIndex((row) => row[0] === currentYear);
+  if (goalRowIndex >= 0) {
+    data.push({
+      range: `Settings!A${goalRowIndex + 2}:B${goalRowIndex + 2}`,
+      majorDimension: "ROWS",
+      values: [[Number(currentYear), goal ?? ""]],
+    });
+  } else if (goal) {
+    const nextSettingRow = Math.max(settingRows.length + 1, 2);
+    data.push({
+      range: `Settings!A${nextSettingRow}:B${nextSettingRow}`,
+      majorDimension: "ROWS",
+      values: [[Number(currentYear), goal]],
     });
   }
-  if (goal) {
-    data.push({
-      range: "Settings!A2:B2",
-      majorDimension: "ROWS",
-      values: [[new Date().getFullYear(), goal]],
-    });
-  }
+
   if (!data.length) return;
 
   await googleRequest(

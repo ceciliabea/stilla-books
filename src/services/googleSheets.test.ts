@@ -43,25 +43,139 @@ describe("Google Sheets-formatet", () => {
 
 describe("Sheets-synk", () => {
   it("skriver aktuell status och läsmål till rätt intervall", async () => {
-    const fetchMock = vi.fn().mockImplementation(async () =>
-      new Response(JSON.stringify({}), {
+    const olderRemoteBook = {
+      ...book,
+      status: "want_to_read" as const,
+      updatedAt: "2026-07-27T10:00:00.000Z",
+    };
+    const localBook = {
+      ...book,
+      updatedAt: "2026-07-28T10:00:00.000Z",
+    };
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            valueRanges: [
+              {
+                values: [
+                  [...BOOK_HEADERS],
+                  bookToSheetRow(olderRemoteBook).map(String),
+                ],
+              },
+              { values: [["year", "readingGoal"]] },
+            ],
+          }),
+          {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({}), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await writeStillaSpreadsheet("token", "sheet-id", [localBook], 12);
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(String(fetchMock.mock.calls[0][0])).toContain("values:batchGet");
+    expect(String(fetchMock.mock.calls[1][0])).toContain("values:batchUpdate");
+    const secondRequest = fetchMock.mock.calls[1][1] as RequestInit;
+    const body = JSON.parse(String(secondRequest.body)) as {
+      data: { range: string; values: (string | boolean | number)[][] }[];
+    };
+    const booksWrite = body.data.find((entry) => entry.range.startsWith("Books!"));
+    const settingsWrite = body.data.find((entry) => entry.range.startsWith("Settings!"));
+
+    expect(booksWrite?.range).toBe("Books!A2:P2");
+    expect(booksWrite?.values[0][BOOK_HEADERS.indexOf("status")]).toBe("reading");
+    expect(settingsWrite?.values[0]).toEqual([new Date().getFullYear(), 12]);
+  });
+
+  it("tömmer aldrig arket när den lokala boklistan är tom", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          valueRanges: [
+            {
+              values: [
+                [...BOOK_HEADERS],
+                bookToSheetRow(book).map(String),
+              ],
+            },
+            { values: [["year", "readingGoal"]] },
+          ],
+        }),
+        {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await writeStillaSpreadsheet("token", "sheet-id", [], null);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(String(fetchMock.mock.calls[0][0])).toContain("values:batchGet");
+    expect(String(fetchMock.mock.calls[0][0])).not.toContain("batchClear");
+  });
+
+  it("lämnar en nyare fjärrversion av en bok orörd", async () => {
+    const newerRemoteBook = {
+      ...book,
+      title: "Nyare titel",
+      updatedAt: "2026-07-29T10:00:00.000Z",
+    };
+    const olderLocalBook = {
+      ...book,
+      title: "Äldre titel",
+      updatedAt: "2026-07-28T10:00:00.000Z",
+    };
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          valueRanges: [
+            {
+              values: [
+                [...BOOK_HEADERS],
+                bookToSheetRow(newerRemoteBook).map(String),
+              ],
+            },
+            { values: [["year", "readingGoal"]] },
+          ],
+        }),
+        {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await writeStillaSpreadsheet("token", "sheet-id", [olderLocalBook], null);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("avbryter utan skrivning om arkstrukturen inte stämmer", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ valueRanges: [{ values: [["fel"]] }] }), {
         status: 200,
         headers: { "Content-Type": "application/json" },
       }),
     );
     vi.stubGlobal("fetch", fetchMock);
 
-    await writeStillaSpreadsheet("token", "sheet-id", [book], 12);
-
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-    const secondRequest = fetchMock.mock.calls[1][1] as RequestInit;
-    const body = JSON.parse(String(secondRequest.body)) as {
-      data: { range: string; values: (string | boolean | number)[][] }[];
-    };
-    const booksWrite = body.data.find((entry) => entry.range.startsWith("Books!"));
-    const settingsWrite = body.data.find((entry) => entry.range === "Settings!A2:B2");
-
-    expect(booksWrite?.values[0][BOOK_HEADERS.indexOf("status")]).toBe("reading");
-    expect(settingsWrite?.values[0]).toEqual([new Date().getFullYear(), 12]);
+    await expect(
+      writeStillaSpreadsheet("token", "sheet-id", [book], 12),
+    ).rejects.toThrow("Synkningen avbröts");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });

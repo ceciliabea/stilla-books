@@ -5,9 +5,12 @@ import {
   Check,
   ChevronRight,
   Heart,
+  Image as ImageIcon,
   Library,
   Menu,
+  Pencil,
   Plus,
+  RefreshCw,
   Search,
   Settings,
   ThumbsDown,
@@ -39,6 +42,10 @@ import {
   requestGoogleToken,
   writeStillaSpreadsheet,
 } from "./services/googleSheets";
+import {
+  refreshBookMetadata,
+  shortenDescription,
+} from "./services/openLibrary";
 import type { Book, BookStatus, Feedback } from "./types";
 
 type SyncState = "idle" | "connecting" | "syncing" | "synced" | "error";
@@ -104,6 +111,8 @@ export default function App() {
   const [sheetReady, setSheetReady] = useState(false);
   const [syncState, setSyncState] = useState<SyncState>("idle");
   const [syncMessage, setSyncMessage] = useState("");
+  const [refreshingCovers, setRefreshingCovers] = useState(false);
+  const [coverRefreshMessage, setCoverRefreshMessage] = useState("");
   const skipNextSheetWrite = useRef(false);
   const shouldRestoreSheet = useRef(
     Boolean(sheetConnection && googleAuthorization),
@@ -326,23 +335,103 @@ export default function App() {
   }
 
   async function updateBook(id: string, changes: Partial<Book>) {
+    const updatedAt = new Date().toISOString();
     return withWritableSheet(() => {
       setBooks((current) =>
         current.map((book) =>
           book.id === id
-            ? { ...book, ...changes, updatedAt: new Date().toISOString().slice(0, 10) }
-            : changes.isFeaturedReading
-              ? { ...book, isFeaturedReading: false }
+            ? { ...book, ...changes, updatedAt }
+            : changes.isFeaturedReading && book.isFeaturedReading
+              ? { ...book, isFeaturedReading: false, updatedAt }
               : book,
         ),
       );
       setSelectedBook((current) =>
-        current?.id === id ? { ...current, ...changes } : current,
+        current?.id === id ? { ...current, ...changes, updatedAt } : current,
       );
     });
   }
 
+  async function refreshOneBook(book: Book) {
+    const metadata = await refreshBookMetadata(book);
+    if (!metadata) return "not_found" as const;
+    const saved = await updateBook(book.id, metadata);
+    return saved ? ("updated" as const) : ("error" as const);
+  }
+
+  async function refreshMissingCovers() {
+    const targets = books.filter((book) => !book.archived && !book.coverUrl);
+    if (targets.length === 0) {
+      setCoverRefreshMessage("Alla böcker i biblioteket har redan ett omslag.");
+      return;
+    }
+
+    setRefreshingCovers(true);
+    setCoverRefreshMessage(
+      `Letar efter omslag till ${targets.length} ${
+        targets.length === 1 ? "bok" : "böcker"
+      }…`,
+    );
+
+    try {
+      const refreshed = new Map<
+        string,
+        NonNullable<Awaited<ReturnType<typeof refreshBookMetadata>>>
+      >();
+      for (let index = 0; index < targets.length; index += 3) {
+        const batch = targets.slice(index, index + 3);
+        const results = await Promise.all(
+          batch.map(async (book) => ({
+            id: book.id,
+            metadata: await refreshBookMetadata(book),
+          })),
+        );
+        results.forEach(({ id, metadata }) => {
+          if (metadata?.coverUrl) refreshed.set(id, metadata);
+        });
+      }
+
+      if (refreshed.size === 0) {
+        setCoverRefreshMessage(
+          "Inga säkra omslag hittades. De illustrerade omslagen får ligga kvar.",
+        );
+        return;
+      }
+
+      const saved = await withWritableSheet(() => {
+        const updatedAt = new Date().toISOString();
+        setBooks((current) =>
+          current.map((book) => {
+            const metadata = refreshed.get(book.id);
+            return metadata
+              ? {
+                  ...book,
+                  coverUrl: metadata.coverUrl,
+                  externalId: book.externalId ?? metadata.externalId,
+                  updatedAt,
+                }
+              : book;
+          }),
+        );
+      });
+      setCoverRefreshMessage(
+        saved
+          ? `${refreshed.size} omslag hämtades och sparas i ditt Google Sheet.`
+          : "Omslagen kunde inte sparas eftersom Google Sheet inte kunde anslutas.",
+      );
+    } catch (error) {
+      setCoverRefreshMessage(
+        error instanceof Error
+          ? error.message
+          : "Omslagen kunde inte hämtas just nu.",
+      );
+    } finally {
+      setRefreshingCovers(false);
+    }
+  }
+
   async function changeStatus(book: Book, status: BookStatus) {
+    const updatedAt = new Date().toISOString();
     return withWritableSheet(() => {
       const changes = getStatusChanges(
         book,
@@ -357,9 +446,9 @@ export default function App() {
       setBooks((current) =>
         current.map((currentBook) =>
           currentBook.id === book.id
-            ? { ...currentBook, ...changes }
-            : changes.isFeaturedReading
-              ? { ...currentBook, isFeaturedReading: false }
+            ? { ...currentBook, ...changes, updatedAt }
+            : changes.isFeaturedReading && currentBook.isFeaturedReading
+              ? { ...currentBook, isFeaturedReading: false, updatedAt }
               : currentBook,
         ),
       );
@@ -527,9 +616,15 @@ export default function App() {
             syncState={syncState}
             syncMessage={syncMessage}
             archivedBooks={books.filter((book) => book.archived)}
+            missingCoverCount={books.filter(
+              (book) => !book.archived && !book.coverUrl,
+            ).length}
+            refreshingCovers={refreshingCovers}
+            coverRefreshMessage={coverRefreshMessage}
             createSheet={createSheet}
             connectSheet={connectExistingSheet}
             refreshSheet={refreshSheet}
+            refreshMissingCovers={refreshMissingCovers}
             restoreBook={(id) => updateBook(id, { archived: false })}
           />
         )}
@@ -562,6 +657,7 @@ export default function App() {
         onClose={() => setSelectedBook(null)}
         changeStatus={changeStatus}
         updateBook={updateBook}
+        refreshBook={refreshOneBook}
       />
       <Celebration
         book={celebrating}
@@ -952,11 +1048,6 @@ interface SearchResult {
   language?: string[];
 }
 
-function shortenDescription(value: string) {
-  const cleaned = value.replace(/\s+/g, " ").trim();
-  return cleaned.length > 240 ? `${cleaned.slice(0, 237).trimEnd()}…` : cleaned;
-}
-
 function AddBookPage({
   existingBooks,
   onAdd,
@@ -1040,7 +1131,7 @@ function AddBookPage({
         !existingBooks.some((book) => !book.archived && book.status === "reading"),
       startedAt: status === "reading" ? today : undefined,
       createdAt: today,
-      updatedAt: today,
+      updatedAt: new Date().toISOString(),
       coverTone: "sage",
     };
     const saved = await onAdd(candidate);
@@ -1113,9 +1204,13 @@ function SettingsPage({
   syncState,
   syncMessage,
   archivedBooks,
+  missingCoverCount,
+  refreshingCovers,
+  coverRefreshMessage,
   createSheet,
   connectSheet,
   refreshSheet,
+  refreshMissingCovers,
   restoreBook,
 }: {
   goal: number | null;
@@ -1125,9 +1220,13 @@ function SettingsPage({
   syncState: SyncState;
   syncMessage: string;
   archivedBooks: Book[];
+  missingCoverCount: number;
+  refreshingCovers: boolean;
+  coverRefreshMessage: string;
   createSheet: () => void;
   connectSheet: () => void;
   refreshSheet: () => void;
+  refreshMissingCovers: () => void;
   restoreBook: (id: string) => void;
 }) {
   const [draftGoal, setDraftGoal] = useState(goal?.toString() ?? "");
@@ -1197,6 +1296,35 @@ function SettingsPage({
           )}
         </section>
         <section className="paper-panel">
+          <p className="eyebrow">Bokhyllan</p>
+          <h2 className="mt-3 font-serif text-3xl">Omslag som saknas</h2>
+          <p className="mt-4 text-sm leading-relaxed text-muted">
+            {missingCoverCount > 0
+              ? `${missingCoverCount} ${
+                  missingCoverCount === 1 ? "bok saknar" : "böcker saknar"
+                } omslag. Stilla söker efter en säker träff utifrån titel, författare och språk.`
+              : "Alla böcker i biblioteket har ett omslag."}
+          </p>
+          <Button
+            variant="secondary"
+            className="mt-7"
+            onClick={refreshMissingCovers}
+            disabled={refreshingCovers || missingCoverCount === 0}
+          >
+            {refreshingCovers ? (
+              <RefreshCw className="size-4 animate-spin stroke-[1.4]" />
+            ) : (
+              <ImageIcon className="size-4 stroke-[1.4]" />
+            )}
+            {refreshingCovers ? "Letar efter omslag…" : "Hämta omslag"}
+          </Button>
+          {coverRefreshMessage && (
+            <p className="mt-4 text-xs leading-relaxed text-muted" role="status">
+              {coverRefreshMessage}
+            </p>
+          )}
+        </section>
+        <section className="paper-panel">
           <p className="eyebrow">Den kontinuerliga linjen</p>
           <h2 className="mt-3 font-serif text-3xl">Läsmål {CURRENT_YEAR}</h2>
           <p className="mt-4 text-sm leading-relaxed text-muted">Frivilligt. Utan mål får linjen bara vara en linje.</p>
@@ -1244,17 +1372,122 @@ function SettingsPage({
   );
 }
 
+interface BookEditDraft {
+  title: string;
+  authors: string;
+  description: string;
+  genres: string;
+  language: string;
+  finishedAt: string;
+}
+
 function BookPanel({
   book,
   onClose,
   changeStatus,
   updateBook,
+  refreshBook,
 }: {
   book: Book | null;
   onClose: () => void;
   changeStatus: (book: Book, status: BookStatus) => Promise<boolean>;
   updateBook: (id: string, changes: Partial<Book>) => Promise<boolean>;
+  refreshBook: (
+    book: Book,
+  ) => Promise<"updated" | "not_found" | "error">;
 }) {
+  const [refreshing, setRefreshing] = useState(false);
+  const [refreshMessage, setRefreshMessage] = useState("");
+  const [editing, setEditing] = useState(false);
+  const [editMessage, setEditMessage] = useState("");
+  const [draft, setDraft] = useState<BookEditDraft>({
+    title: "",
+    authors: "",
+    description: "",
+    genres: "",
+    language: "",
+    finishedAt: "",
+  });
+
+  useEffect(() => {
+    setRefreshing(false);
+    setRefreshMessage("");
+    setEditing(false);
+    setEditMessage("");
+  }, [book?.id]);
+
+  function beginEditing() {
+    if (!book) return;
+    setDraft({
+      title: book.title,
+      authors: book.authors.join(", "),
+      description: book.description,
+      genres: book.genres.join(", "),
+      language: book.language ?? "",
+      finishedAt: book.finishedAt ?? "",
+    });
+    setEditMessage("");
+    setEditing(true);
+  }
+
+  async function saveEdits(event: React.FormEvent) {
+    event.preventDefault();
+    if (!book) return;
+    const title = draft.title.trim();
+    const authors = draft.authors
+      .split(",")
+      .map((author) => author.trim())
+      .filter(Boolean);
+    if (!title || authors.length === 0) {
+      setEditMessage("Titel och minst en författare behöver finnas.");
+      return;
+    }
+
+    const saved = await updateBook(book.id, {
+      title,
+      authors,
+      description: draft.description.trim(),
+      genres: draft.genres
+        .split(",")
+        .map((genre) => genre.trim())
+        .filter(Boolean),
+      language: draft.language.trim() || undefined,
+      ...(book.status === "read"
+        ? { finishedAt: draft.finishedAt || undefined }
+        : {}),
+    });
+    if (saved) {
+      setEditing(false);
+      setEditMessage("Ändringarna är sparade.");
+    } else {
+      setEditMessage("Ändringarna kunde inte sparas i Google Sheet.");
+    }
+  }
+
+  async function handleRefresh() {
+    if (!book) return;
+    setRefreshing(true);
+    setRefreshMessage("");
+    try {
+      const result = await refreshBook(book);
+      setRefreshMessage(
+        result === "updated"
+          ? "Bokinformationen är uppdaterad."
+          : result === "not_found"
+            ? "Ingen säker katalogträff hittades. Informationen lämnades oförändrad."
+            : "Informationen kunde inte sparas i Google Sheet.",
+      );
+    } catch (error) {
+      setRefreshMessage(
+        error instanceof Error
+          ? error.message
+          : "Bokinformationen kunde inte hämtas just nu.",
+      );
+    } finally {
+      setRefreshing(false);
+    }
+  }
+
   return (
     <Dialog.Root open={Boolean(book)} onOpenChange={(open) => !open && onClose()}>
       <Dialog.Portal>
@@ -1267,36 +1500,102 @@ function BookPanel({
                 <BookCover book={book} className="mx-auto w-40 md:w-full" />
                 <div className="flex flex-col">
                   <p className="eyebrow">{statusLabel[book.status]}</p>
-                  <Dialog.Title className="mt-3 font-serif text-4xl leading-none tracking-[-0.025em] md:text-5xl">{book.title}</Dialog.Title>
-                  <Dialog.Description className="mt-2 text-sm text-muted">{book.authors.join(", ")}</Dialog.Description>
-                  <p className="mt-7 font-serif text-lg leading-relaxed text-ink/75">{book.description}</p>
-                  {book.genres.length > 0 && <p className="mt-5 text-xs tracking-wide text-muted">{book.genres.join(" · ")}</p>}
-                  {book.feedback && <FeedbackLabel feedback={book.feedback} className="mt-6" />}
-                  <div className="mt-8 flex flex-wrap gap-2">
-                    {book.status !== "want_to_read" && <Button variant="secondary" onClick={() => changeStatus(book, "want_to_read")}>Vill läsa</Button>}
-                    {book.status !== "reading" && <Button variant="secondary" onClick={() => changeStatus(book, "reading")}>Läser</Button>}
-                    {book.status !== "read" && <Button onClick={() => changeStatus(book, "read")}><Check className="size-4" /> Markera som läst</Button>}
+                  <div className="mt-3 flex items-start gap-3">
+                    <Dialog.Title className="min-w-0 flex-1 font-serif text-4xl leading-none tracking-[-0.025em] md:text-5xl">{book.title}</Dialog.Title>
+                    <Button
+                      variant="icon"
+                      className="shrink-0"
+                      onClick={beginEditing}
+                      aria-label="Redigera bokinformation"
+                    >
+                      <Pencil className="size-4 stroke-[1.4]" />
+                    </Button>
                   </div>
-                  {book.status === "reading" && !book.isFeaturedReading && (
-                    <button onClick={() => updateBook(book.id, { isFeaturedReading: true })} className="text-link mt-5 self-start">Visa som huvudbok</button>
+                  <Dialog.Description className="mt-2 text-sm text-muted">{book.authors.join(", ")}</Dialog.Description>
+                  {editing ? (
+                    <BookEditForm
+                      book={book}
+                      draft={draft}
+                      setDraft={setDraft}
+                      message={editMessage}
+                      save={saveEdits}
+                      cancel={() => {
+                        setEditing(false);
+                        setEditMessage("");
+                      }}
+                    />
+                  ) : (
+                    <>
+                      <p className="mt-7 font-serif text-lg leading-relaxed text-ink/75">{book.description}</p>
+                      {book.genres.length > 0 && <p className="mt-5 text-xs tracking-wide text-muted">{book.genres.join(" · ")}</p>}
+                      {book.status === "read" && book.finishedAt && (
+                        <p className="mt-4 text-xs tracking-wide text-muted">
+                          Utläst {book.finishedAt}
+                        </p>
+                      )}
+                      {book.feedback && <FeedbackLabel feedback={book.feedback} className="mt-6" />}
+                    </>
                   )}
-                  {book.status === "read" && (
-                    <div className="mt-8 border-t border-ink/10 pt-6">
-                      <p className="text-xs uppercase tracking-[0.16em] text-muted">Hur kändes den?</p>
-                      <FeedbackButtons book={book} onFeedback={(feedback) => updateBook(book.id, { feedback })} />
-                    </div>
+                  {!editing && editMessage && (
+                    <p className="mt-4 text-xs leading-relaxed text-muted" role="status">
+                      {editMessage}
+                    </p>
                   )}
-                  <button
-                    className="mt-10 self-start text-xs text-muted underline decoration-ink/20 underline-offset-4 hover:text-ink"
-                    onClick={async () => {
-                      if (window.confirm("Ta bort boken från ditt bibliotek? Den kan återställas senare.")) {
-                        const saved = await updateBook(book.id, { archived: true });
-                        if (saved) onClose();
-                      }
-                    }}
-                  >
-                    Ta bort från mitt bibliotek
-                  </button>
+                  {!editing && (
+                    <>
+                      <div className="mt-6">
+                        <Button
+                          variant="ghost"
+                          className="-ml-3"
+                          onClick={handleRefresh}
+                          disabled={refreshing}
+                        >
+                          <RefreshCw
+                            className={cn(
+                              "size-4 stroke-[1.4]",
+                              refreshing && "animate-spin",
+                            )}
+                          />
+                          {refreshing
+                            ? "Hämtar bokinformation…"
+                            : "Hämta om bokinformationen"}
+                        </Button>
+                        {refreshMessage && (
+                          <p
+                            className="mt-2 max-w-sm text-xs leading-relaxed text-muted"
+                            role="status"
+                          >
+                            {refreshMessage}
+                          </p>
+                        )}
+                      </div>
+                      <div className="mt-8 flex flex-wrap gap-2">
+                        {book.status !== "want_to_read" && <Button variant="secondary" onClick={() => changeStatus(book, "want_to_read")}>Vill läsa</Button>}
+                        {book.status !== "reading" && <Button variant="secondary" onClick={() => changeStatus(book, "reading")}>Läser</Button>}
+                        {book.status !== "read" && <Button onClick={() => changeStatus(book, "read")}><Check className="size-4" /> Markera som läst</Button>}
+                      </div>
+                      {book.status === "reading" && !book.isFeaturedReading && (
+                        <button onClick={() => updateBook(book.id, { isFeaturedReading: true })} className="text-link mt-5 self-start">Visa som huvudbok</button>
+                      )}
+                      {book.status === "read" && (
+                        <div className="mt-8 border-t border-ink/10 pt-6">
+                          <p className="text-xs uppercase tracking-[0.16em] text-muted">Hur kändes den?</p>
+                          <FeedbackButtons book={book} onFeedback={(feedback) => updateBook(book.id, { feedback })} />
+                        </div>
+                      )}
+                      <button
+                        className="mt-10 self-start text-xs text-muted underline decoration-ink/20 underline-offset-4 hover:text-ink"
+                        onClick={async () => {
+                          if (window.confirm("Ta bort boken från ditt bibliotek? Den kan återställas senare.")) {
+                            const saved = await updateBook(book.id, { archived: true });
+                            if (saved) onClose();
+                          }
+                        }}
+                      >
+                        Ta bort från mitt bibliotek
+                      </button>
+                    </>
+                  )}
                 </div>
               </div>
             </>
@@ -1304,6 +1603,134 @@ function BookPanel({
         </Dialog.Content>
       </Dialog.Portal>
     </Dialog.Root>
+  );
+}
+
+function BookEditForm({
+  book,
+  draft,
+  setDraft,
+  message,
+  save,
+  cancel,
+}: {
+  book: Book;
+  draft: BookEditDraft;
+  setDraft: React.Dispatch<React.SetStateAction<BookEditDraft>>;
+  message: string;
+  save: (event: React.FormEvent) => void;
+  cancel: () => void;
+}) {
+  return (
+    <form className="mt-7 border-y border-ink/10 py-7" onSubmit={save}>
+      <div className="grid gap-5">
+        <label className="text-xs tracking-wide text-muted">
+          Titel
+          <input
+            className="edit-field"
+            value={draft.title}
+            onChange={(event) =>
+              setDraft((current) => ({
+                ...current,
+                title: event.target.value,
+              }))
+            }
+            required
+          />
+        </label>
+        <label className="text-xs tracking-wide text-muted">
+          Författare
+          <input
+            className="edit-field"
+            value={draft.authors}
+            onChange={(event) =>
+              setDraft((current) => ({
+                ...current,
+                authors: event.target.value,
+              }))
+            }
+            placeholder="Separera flera med kommatecken"
+            required
+          />
+        </label>
+        <label className="text-xs tracking-wide text-muted">
+          Kort beskrivning
+          <textarea
+            className="edit-field min-h-28 resize-y"
+            value={draft.description}
+            onChange={(event) =>
+              setDraft((current) => ({
+                ...current,
+                description: event.target.value,
+              }))
+            }
+          />
+        </label>
+        <div className="grid gap-5 sm:grid-cols-2">
+          <label className="text-xs tracking-wide text-muted">
+            Genrer
+            <input
+              className="edit-field"
+              value={draft.genres}
+              onChange={(event) =>
+                setDraft((current) => ({
+                  ...current,
+                  genres: event.target.value,
+                }))
+              }
+              placeholder="Roman, poesi"
+            />
+          </label>
+          <label className="text-xs tracking-wide text-muted">
+            Språk
+            <input
+              className="edit-field"
+              value={draft.language}
+              onChange={(event) =>
+                setDraft((current) => ({
+                  ...current,
+                  language: event.target.value,
+                }))
+              }
+              placeholder="sv"
+            />
+          </label>
+        </div>
+        {book.status === "read" && (
+          <label className="text-xs tracking-wide text-muted">
+            Utläst datum
+            <input
+              type="date"
+              className="edit-field"
+              value={draft.finishedAt}
+              onChange={(event) =>
+                setDraft((current) => ({
+                  ...current,
+                  finishedAt: event.target.value,
+                }))
+              }
+            />
+            <span className="mt-2 block leading-relaxed">
+              Året i datumet avgör vilket års läsmål boken räknas till.
+            </span>
+          </label>
+        )}
+      </div>
+      {message && (
+        <p
+          className="mt-4 text-xs leading-relaxed text-[#895e52]"
+          role="alert"
+        >
+          {message}
+        </p>
+      )}
+      <div className="mt-6 flex flex-wrap gap-2">
+        <Button type="submit">Spara ändringar</Button>
+        <Button type="button" variant="ghost" onClick={cancel}>
+          Avbryt
+        </Button>
+      </div>
+    </form>
   );
 }
 
