@@ -5,7 +5,6 @@ import {
   Check,
   ChevronRight,
   Heart,
-  Image as ImageIcon,
   Library,
   Menu,
   Pencil,
@@ -44,7 +43,6 @@ import {
 } from "./services/googleSheets";
 import {
   findBookMetadataCandidates,
-  refreshBookMetadata,
   refreshBookMetadataFromCandidate,
   shortenDescription,
   type BookMetadataCandidate,
@@ -72,25 +70,25 @@ const feedbackMeta: Record<Feedback, { label: string; icon: typeof Heart }> = {
   loved: { label: "Älskade", icon: Heart },
 };
 
-const languageOptions = [
-  { value: "sv", label: "Svenska" },
-  { value: "eng", label: "Engelska" },
-  { value: "nor", label: "Norska" },
-  { value: "dan", label: "Danska" },
-  { value: "fin", label: "Finska" },
-  { value: "isl", label: "Isländska" },
-  { value: "deu", label: "Tyska" },
-  { value: "fra", label: "Franska" },
-  { value: "spa", label: "Spanska" },
-  { value: "ita", label: "Italienska" },
-] as const;
+const languageNames: Record<string, string> = {
+  sv: "Svenska",
+  swe: "Svenska",
+  en: "Engelska",
+  eng: "Engelska",
+  nor: "Norska",
+  dan: "Danska",
+  fin: "Finska",
+  isl: "Isländska",
+  deu: "Tyska",
+  ger: "Tyska",
+  fra: "Franska",
+  fre: "Franska",
+  spa: "Spanska",
+  ita: "Italienska",
+};
 
 function languageLabel(code: string) {
-  const normalized = code === "swe" ? "sv" : code;
-  return (
-    languageOptions.find((language) => language.value === normalized)?.label ??
-    code
-  );
+  return languageNames[code.toLocaleLowerCase("sv")] ?? code;
 }
 
 function loadBooks() {
@@ -135,8 +133,6 @@ export default function App() {
   const [sheetReady, setSheetReady] = useState(false);
   const [syncState, setSyncState] = useState<SyncState>("idle");
   const [syncMessage, setSyncMessage] = useState("");
-  const [refreshingCovers, setRefreshingCovers] = useState(false);
-  const [coverRefreshMessage, setCoverRefreshMessage] = useState("");
   const skipNextSheetWrite = useRef(false);
   const shouldRestoreSheet = useRef(
     Boolean(sheetConnection && googleAuthorization),
@@ -264,7 +260,13 @@ export default function App() {
         });
     }, 650);
     return () => window.clearTimeout(timeout);
-  }, [books, goal, googleToken, sheetConnection, sheetReady]);
+  }, [
+    books,
+    goal,
+    googleToken,
+    sheetConnection,
+    sheetReady,
+  ]);
 
   useEffect(() => {
     if (!sheetConnection || !googleToken || !sheetReady) return;
@@ -396,79 +398,11 @@ export default function App() {
     book: Book,
     candidate: BookMetadataCandidate,
   ) {
-    const metadata = await refreshBookMetadataFromCandidate(book, candidate);
-    return updateBook(book.id, metadata);
-  }
-
-  async function refreshMissingCovers() {
-    const targets = books.filter((book) => !book.archived && !book.coverUrl);
-    if (targets.length === 0) {
-      setCoverRefreshMessage("Alla böcker i biblioteket har redan ett omslag.");
-      return;
-    }
-
-    setRefreshingCovers(true);
-    setCoverRefreshMessage(
-      `Letar efter omslag till ${targets.length} ${
-        targets.length === 1 ? "bok" : "böcker"
-      }…`,
+    const metadata = await refreshBookMetadataFromCandidate(
+      book,
+      candidate,
     );
-
-    try {
-      const refreshed = new Map<
-        string,
-        NonNullable<Awaited<ReturnType<typeof refreshBookMetadata>>>
-      >();
-      for (let index = 0; index < targets.length; index += 3) {
-        const batch = targets.slice(index, index + 3);
-        const results = await Promise.all(
-          batch.map(async (book) => ({
-            id: book.id,
-            metadata: await refreshBookMetadata(book),
-          })),
-        );
-        results.forEach(({ id, metadata }) => {
-          if (metadata?.coverUrl) refreshed.set(id, metadata);
-        });
-      }
-
-      if (refreshed.size === 0) {
-        setCoverRefreshMessage(
-          "Inga säkra omslag hittades. De illustrerade omslagen får ligga kvar.",
-        );
-        return;
-      }
-
-      const saved = await withWritableSheet(() => {
-        const updatedAt = new Date().toISOString();
-        setBooks((current) =>
-          current.map((book) => {
-            const metadata = refreshed.get(book.id);
-            return metadata
-              ? {
-                  ...book,
-                  coverUrl: metadata.coverUrl,
-                  externalId: book.externalId ?? metadata.externalId,
-                  updatedAt,
-                }
-              : book;
-          }),
-        );
-      });
-      setCoverRefreshMessage(
-        saved
-          ? `${refreshed.size} omslag hämtades och sparas i ditt Google Sheet.`
-          : "Omslagen kunde inte sparas eftersom Google Sheet inte kunde anslutas.",
-      );
-    } catch (error) {
-      setCoverRefreshMessage(
-        error instanceof Error
-          ? error.message
-          : "Omslagen kunde inte hämtas just nu.",
-      );
-    } finally {
-      setRefreshingCovers(false);
-    }
+    return updateBook(book.id, metadata);
   }
 
   async function changeStatus(book: Book, status: BookStatus) {
@@ -533,7 +467,12 @@ export default function App() {
           `https://docs.google.com/spreadsheets/d/${result.spreadsheetId}/edit`,
         title: result.properties?.title ?? "Stilla Books",
       };
-      await writeStillaSpreadsheet(token, result.spreadsheetId, books, goal);
+      await writeStillaSpreadsheet(
+        token,
+        result.spreadsheetId,
+        books,
+        goal,
+      );
       skipNextSheetWrite.current = true;
       rememberSheet(connection);
       setSheetReady(true);
@@ -656,17 +595,9 @@ export default function App() {
             configured={isGoogleConfigured()}
             syncState={syncState}
             syncMessage={syncMessage}
-            archivedBooks={books.filter((book) => book.archived)}
-            missingCoverCount={books.filter(
-              (book) => !book.archived && !book.coverUrl,
-            ).length}
-            refreshingCovers={refreshingCovers}
-            coverRefreshMessage={coverRefreshMessage}
             createSheet={createSheet}
             connectSheet={connectExistingSheet}
             refreshSheet={refreshSheet}
-            refreshMissingCovers={refreshMissingCovers}
-            restoreBook={(id) => updateBook(id, { archived: false })}
           />
         )}
       </main>
@@ -1245,15 +1176,9 @@ function SettingsPage({
   configured,
   syncState,
   syncMessage,
-  archivedBooks,
-  missingCoverCount,
-  refreshingCovers,
-  coverRefreshMessage,
   createSheet,
   connectSheet,
   refreshSheet,
-  refreshMissingCovers,
-  restoreBook,
 }: {
   goal: number | null;
   setGoal: (goal: number | null) => void;
@@ -1261,15 +1186,9 @@ function SettingsPage({
   configured: boolean;
   syncState: SyncState;
   syncMessage: string;
-  archivedBooks: Book[];
-  missingCoverCount: number;
-  refreshingCovers: boolean;
-  coverRefreshMessage: string;
   createSheet: () => void;
   connectSheet: () => void;
   refreshSheet: () => void;
-  refreshMissingCovers: () => void;
-  restoreBook: (id: string) => void;
 }) {
   const [draftGoal, setDraftGoal] = useState(goal?.toString() ?? "");
   const busy = syncState === "connecting" || syncState === "syncing";
@@ -1338,35 +1257,6 @@ function SettingsPage({
           )}
         </section>
         <section className="paper-panel">
-          <p className="eyebrow">Bokhyllan</p>
-          <h2 className="mt-3 font-serif text-3xl">Omslag som saknas</h2>
-          <p className="mt-4 text-sm leading-relaxed text-muted">
-            {missingCoverCount > 0
-              ? `${missingCoverCount} ${
-                  missingCoverCount === 1 ? "bok saknar" : "böcker saknar"
-                } omslag. Stilla söker efter en säker träff utifrån titel, författare och språk.`
-              : "Alla böcker i biblioteket har ett omslag."}
-          </p>
-          <Button
-            variant="secondary"
-            className="mt-7"
-            onClick={refreshMissingCovers}
-            disabled={refreshingCovers || missingCoverCount === 0}
-          >
-            {refreshingCovers ? (
-              <RefreshCw className="size-4 animate-spin stroke-[1.4]" />
-            ) : (
-              <ImageIcon className="size-4 stroke-[1.4]" />
-            )}
-            {refreshingCovers ? "Letar efter omslag…" : "Hämta omslag"}
-          </Button>
-          {coverRefreshMessage && (
-            <p className="mt-4 text-xs leading-relaxed text-muted" role="status">
-              {coverRefreshMessage}
-            </p>
-          )}
-        </section>
-        <section className="paper-panel">
           <p className="eyebrow">Den kontinuerliga linjen</p>
           <h2 className="mt-3 font-serif text-3xl">Läsmål {CURRENT_YEAR}</h2>
           <p className="mt-4 text-sm leading-relaxed text-muted">Frivilligt. Utan mål får linjen bara vara en linje.</p>
@@ -1384,31 +1274,6 @@ function SettingsPage({
           </div>
           {goal && <button onClick={() => { setGoal(null); setDraftGoal(""); }} className="text-link mt-5">Ta bort läsmålet</button>}
         </section>
-        {archivedBooks.length > 0 && (
-          <section className="paper-panel lg:col-span-2">
-            <p className="eyebrow">Undanställda berättelser</p>
-            <h2 className="mt-3 font-serif text-3xl">Arkiverade böcker</h2>
-            <p className="mt-4 text-sm leading-relaxed text-muted">
-              Böcker du tagit bort ligger kvar i arket och kan återställas här.
-            </p>
-            <div className="mt-7 divide-y divide-ink/10">
-              {archivedBooks.map((book) => (
-                <div
-                  key={book.id}
-                  className="flex flex-col justify-between gap-3 py-4 first:pt-0 sm:flex-row sm:items-center"
-                >
-                  <div>
-                    <p className="font-serif text-xl">{book.title}</p>
-                    <p className="mt-1 text-xs text-muted">{book.authors.join(", ")}</p>
-                  </div>
-                  <button className="text-link self-start sm:self-auto" onClick={() => restoreBook(book.id)}>
-                    Återställ
-                  </button>
-                </div>
-              ))}
-            </div>
-          </section>
-        )}
       </div>
     </div>
   );
@@ -1420,7 +1285,6 @@ interface BookEditDraft {
   coverUrl: string;
   description: string;
   genres: string;
-  language: string;
   finishedAt: string;
 }
 
@@ -1461,7 +1325,6 @@ function BookPanel({
     coverUrl: "",
     description: "",
     genres: "",
-    language: "",
     finishedAt: "",
   });
 
@@ -1482,7 +1345,6 @@ function BookPanel({
       coverUrl: book.coverUrl ?? "",
       description: book.description,
       genres: book.genres.join(", "),
-      language: book.language ?? "",
       finishedAt: book.finishedAt ?? "",
     });
     setEditMessage("");
@@ -1516,7 +1378,6 @@ function BookPanel({
         .split(",")
         .map((genre) => genre.trim())
         .filter(Boolean),
-      language: draft.language.trim() || undefined,
       ...(book.status === "read"
         ? { finishedAt: draft.finishedAt || undefined }
         : {}),
@@ -1843,50 +1704,20 @@ function BookEditForm({
             />
           </div>
         )}
-        <div className="grid gap-5 sm:grid-cols-2">
-          <label className="text-xs tracking-wide text-muted">
-            Genrer
-            <input
-              className="edit-field"
-              value={draft.genres}
-              onChange={(event) =>
-                setDraft((current) => ({
-                  ...current,
-                  genres: event.target.value,
-                }))
-              }
-              placeholder="Roman, poesi"
-            />
-          </label>
-          <label className="text-xs tracking-wide text-muted">
-            Språk
-            <select
-              className="edit-field"
-              value={draft.language}
-              onChange={(event) =>
-                setDraft((current) => ({
-                  ...current,
-                  language: event.target.value,
-                }))
-              }
-            >
-              <option value="">Ej angivet</option>
-              {draft.language &&
-                !languageOptions.some(
-                  (language) => language.value === draft.language,
-                ) && (
-                  <option value={draft.language}>
-                    Annat ({draft.language})
-                  </option>
-                )}
-              {languageOptions.map((language) => (
-                <option key={language.value} value={language.value}>
-                  {language.label}
-                </option>
-              ))}
-            </select>
-          </label>
-        </div>
+        <label className="text-xs tracking-wide text-muted">
+          Genrer
+          <input
+            className="edit-field"
+            value={draft.genres}
+            onChange={(event) =>
+              setDraft((current) => ({
+                ...current,
+                genres: event.target.value,
+              }))
+            }
+            placeholder="Roman, poesi"
+          />
+        </label>
         {book.status === "read" && (
           <label className="text-xs tracking-wide text-muted">
             Utläst datum

@@ -48,13 +48,6 @@ describe("uppdatering från Open Library", () => {
             },
           ],
         }),
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({
-          description: "En ny och längre beskrivning.",
-          subjects: ["Roman", "Svensk litteratur"],
-        }),
       });
     vi.stubGlobal("fetch", fetchMock);
 
@@ -63,10 +56,10 @@ describe("uppdatering från Open Library", () => {
     expect(metadata).toMatchObject({
       externalId: "/works/OL-SV",
       coverUrl: "https://covers.openlibrary.org/b/id/20-L.jpg",
-      description: "En ny och längre beskrivning.",
-      genres: ["Roman", "Svensk litteratur"],
-      language: "sv",
     });
+    expect(metadata).not.toHaveProperty("genres");
+    expect(String(fetchMock.mock.calls[0][0])).toContain("lang=sv");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it("avstår när titel och författare inte matchar tillräckligt", async () => {
@@ -142,5 +135,64 @@ describe("uppdatering från Open Library", () => {
         safeMatch: false,
       }),
     ]);
+  });
+
+  it("låter titeln styra språket i stället för ett gammalt språkfält", async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        docs: [
+          {
+            key: "/works/OL-MAN",
+            title: "Mãn",
+            author_name: ["Kim Thúy"],
+            cover_i: 44,
+            language: ["spa"],
+          },
+        ],
+      }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const metadata = await refreshBookMetadata({
+      ...book,
+      title: "Mãn",
+      authors: ["Kim Thúy"],
+      language: "spa",
+    });
+
+    expect(String(fetchMock.mock.calls[0][0])).toContain("lang=sv");
+    expect(metadata).not.toHaveProperty("coverUrl");
+    expect(metadata).not.toHaveProperty("description");
+  });
+
+  it("hämtar engelsk utgåva när titeln tydligt är engelsk", async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        docs: [
+          {
+            key: "/works/OL-HELP",
+            title: "The Help",
+            author_name: ["Kathryn Stockett"],
+            cover_i: 55,
+            language: ["eng"],
+          },
+        ],
+      }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const metadata = await refreshBookMetadata({
+      ...book,
+      title: "The Help",
+      authors: ["Kathryn Stockett"],
+      language: "spa",
+    });
+
+    expect(String(fetchMock.mock.calls[0][0])).toContain("lang=en");
+    expect(metadata?.coverUrl).toBe(
+      "https://covers.openlibrary.org/b/id/55-L.jpg",
+    );
   });
 });

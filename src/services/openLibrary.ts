@@ -35,18 +35,105 @@ function normalize(value: string) {
 
 function languageCode(language?: string) {
   const normalized = language?.toLocaleLowerCase("sv");
-  if (normalized === "sv" || normalized === "swe" || normalized === "svenska") {
-    return "swe";
-  }
-  return normalized;
+  const aliases: Record<string, string> = {
+    sv: "swe",
+    svenska: "swe",
+    en: "eng",
+    engelska: "eng",
+    no: "nor",
+    da: "dan",
+    fi: "fin",
+    is: "isl",
+    de: "deu",
+    fr: "fra",
+    es: "spa",
+    it: "ita",
+  };
+  return normalized ? aliases[normalized] ?? normalized : undefined;
 }
 
-function scoreResult(result: OpenLibrarySearchResult, book: Book) {
+function twoLetterLanguageCode(language?: string) {
+  const normalized = languageCode(language);
+  const codes: Record<string, string> = {
+    swe: "sv",
+    eng: "en",
+    nor: "no",
+    dan: "da",
+    fin: "fi",
+    isl: "is",
+    deu: "de",
+    fra: "fr",
+    spa: "es",
+    ita: "it",
+  };
+  return normalized ? codes[normalized] ?? normalized.slice(0, 2) : undefined;
+}
+
+function inferTitleLanguage(title: string) {
+  const words = new Set(normalize(title).split(" ").filter(Boolean));
+  const hasAny = (candidates: string[]) =>
+    candidates.some((candidate) => words.has(candidate));
+
+  if (
+    /[åäö]/iu.test(title) ||
+    hasAny([
+      "och",
+      "den",
+      "det",
+      "en",
+      "ett",
+      "att",
+      "som",
+      "på",
+      "för",
+      "med",
+      "till",
+      "från",
+      "inte",
+      "över",
+      "mellan",
+    ])
+  ) {
+    return "sv";
+  }
+
+  if (
+    hasAny([
+      "the",
+      "and",
+      "of",
+      "a",
+      "an",
+      "to",
+      "in",
+      "on",
+      "for",
+      "with",
+      "my",
+      "our",
+      "who",
+      "when",
+      "where",
+    ])
+  ) {
+    return "en";
+  }
+
+  // Korta eller språkligt neutrala titlar som "Mãn" får svensk
+  // utgåva som förstahandsval, eftersom Stilla primärt är ett svenskt bibliotek.
+  return "sv";
+}
+
+function scoreResult(
+  result: OpenLibrarySearchResult,
+  book: Book,
+  preferredLanguage?: string,
+) {
   const wantedTitle = normalize(book.title);
   const resultTitle = normalize(result.title);
   const wantedAuthors = book.authors.map(normalize);
   const resultAuthors = (result.author_name ?? []).map(normalize);
-  const wantedLanguage = languageCode(book.language);
+  const wantedLanguage = languageCode(preferredLanguage ?? book.language);
 
   let score = 0;
   if (book.externalId && result.key === book.externalId) score += 12;
@@ -105,7 +192,9 @@ export function shortenDescription(value: string) {
 
 export async function findBookMetadataCandidates(
   book: Book,
+  preferredLanguage = inferTitleLanguage(book.title),
 ): Promise<BookMetadataCandidate[]> {
+  const searchLanguage = twoLetterLanguageCode(preferredLanguage);
   const params = new URLSearchParams({
     title: book.title,
     author: book.authors[0] ?? "",
@@ -113,6 +202,7 @@ export async function findBookMetadataCandidates(
     fields:
       "key,title,author_name,cover_i,first_publish_year,subject,language",
   });
+  if (searchLanguage) params.set("lang", searchLanguage);
   const response = await fetch(
     `https://openlibrary.org/search.json?${params.toString()}`,
   );
@@ -122,7 +212,10 @@ export async function findBookMetadataCandidates(
 
   const data = (await response.json()) as { docs?: OpenLibrarySearchResult[] };
   return (data.docs ?? [])
-    .map((result) => ({ result, score: scoreResult(result, book) }))
+    .map((result) => ({
+      result,
+      score: scoreResult(result, book, preferredLanguage),
+    }))
     .sort((a, b) => b.score - a.score)
     .slice(0, 6)
     .map(({ result }) => ({
@@ -144,59 +237,39 @@ export async function findBookMetadataCandidates(
 export async function refreshBookMetadataFromCandidate(
   book: Book,
   candidate: BookMetadataCandidate,
+  preferredLanguage = inferTitleLanguage(book.title),
 ): Promise<RefreshedBookMetadata> {
-  let description = candidate.firstPublishYear
-    ? `Först utgiven ${candidate.firstPublishYear}.`
+  const wantedLanguage = languageCode(preferredLanguage);
+  const candidateMatchesLanguage =
+    candidate.languages.length === 0 ||
+    !wantedLanguage ||
+    candidate.languages.includes(wantedLanguage);
+  const coverUrl = candidateMatchesLanguage
+    ? candidate.coverUrl
     : undefined;
-  let genres = candidate.subjects;
-
-  try {
-    const detailResponse = await fetch(
-      `https://openlibrary.org${candidate.key}.json`,
-    );
-    if (detailResponse.ok) {
-      const details = (await detailResponse.json()) as {
-        description?: string | { value?: string };
-        subjects?: string[];
-      };
-      const detailedDescription =
-        typeof details.description === "string"
-          ? details.description
-          : details.description?.value;
-      if (detailedDescription) {
-        description = shortenDescription(detailedDescription);
-      }
-      if (details.subjects?.length) genres = details.subjects.slice(0, 3);
-    }
-  } catch {
-    // Sökresultatets metadata är en trygg reserv.
-  }
-
-  const wantedLanguage = languageCode(book.language);
-  const matchedLanguage =
-    wantedLanguage && candidate.languages.includes(wantedLanguage)
-      ? wantedLanguage === "swe"
-        ? "sv"
-        : wantedLanguage
-      : candidate.languages[0];
 
   return {
     externalId: candidate.key,
     title: candidate.title,
     authors: candidate.authors.length ? candidate.authors : book.authors,
-    ...(candidate.coverUrl ? { coverUrl: candidate.coverUrl } : {}),
-    ...(description ? { description } : {}),
-    ...(genres?.length ? { genres } : {}),
-    ...(matchedLanguage ? { language: matchedLanguage } : {}),
+    ...(coverUrl ? { coverUrl } : {}),
   };
 }
 
 export async function refreshBookMetadata(
   book: Book,
+  preferredLanguage = inferTitleLanguage(book.title),
 ): Promise<RefreshedBookMetadata | null> {
-  const candidates = await findBookMetadataCandidates(book);
+  const candidates = await findBookMetadataCandidates(
+    book,
+    preferredLanguage,
+  );
   const safeCandidate = candidates.find((candidate) => candidate.safeMatch);
   return safeCandidate
-    ? refreshBookMetadataFromCandidate(book, safeCandidate)
+    ? refreshBookMetadataFromCandidate(
+        book,
+        safeCandidate,
+        preferredLanguage,
+      )
     : null;
 }
