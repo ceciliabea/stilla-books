@@ -37,7 +37,7 @@ button:focus-visible, a:focus-visible { outline:2px solid #a8b69a; outline-offse
 .book-scroll { @apply flex gap-5 overflow-x-auto pb-6 md:grid md:grid-cols-4 md:overflow-visible md:pb-0 lg:gap-9; scrollbar-width: none; }
 .book-scroll::-webkit-scrollbar { display:none; }
 .mini-action { @apply mt-3 text-[10px] uppercase tracking-[.12em] text-muted opacity-100 transition-colors hover:text-ink md:opacity-0 md:group-hover:opacity-100; }
-.quiet-empty { @apply my-12 flex min-h-64 flex-col items-center justify-center gap-5 border-y border-ink/10 py-12 text-muted; }
+.quiet-empty { @apply my-12 flex min-h-64 flex-col items-center justify-center gap-5 border-y border-ink/40 py-12 text-muted; }
 .search-field { @apply flex w-full items-center gap-3 rounded-full border border-ink/15 bg-white/35 py-2 pl-5 pr-2 transition-colors focus-within:border-sage focus-within:bg-white/55; }
 .search-field input { @apply min-w-0 flex-1 bg-transparent py-2 text-sm text-ink outline-none placeholder:text-muted/80; }
 .tab-list { @apply flex gap-1 overflow-x-auto border-b border-ink/10; }

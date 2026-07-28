@@ -379,7 +379,7 @@ export default function App() {
       <footer className="page-shell pb-8 pt-12 text-xs text-muted">
         <FooterBookmark />
         <div className="flex flex-col justify-between gap-4 pt-6 sm:flex-row sm:items-center">
-          <p>Stilla Books · En privat plats för läsning och eftertanke.</p>
+          <p>Stilla Books · En plats för reflektion mellan sidorna.</p>
           <nav className="flex gap-5" aria-label="Juridisk information">
             <a
               className="transition-colors hover:text-ink"
@@ -419,7 +419,7 @@ export default function App() {
 
 function FooterBookmark() {
   return (
-    <div className="relative h-[82px] border-b border-ink/10 md:h-[88px]" aria-hidden="true">
+    <div className="relative h-[82px] border-b border-ink/40 md:h-[88px]" aria-hidden="true">
       <svg
         viewBox="0 0 160 132"
         className="absolute bottom-[-10px] left-1/2 h-[88px] w-[106px] -translate-x-1/2 overflow-visible md:h-24 md:w-[118px]"
@@ -427,7 +427,7 @@ function FooterBookmark() {
         <g transform="translate(80 66) rotate(-36) translate(-80 -66)">
         <path
           d="M68 8 C64 29 74 40 69 59 C64 78 72 93 71 116 L80 106 L89 116 C88 94 96 78 91 59 C86 40 96 29 92 8 C85 5 75 5 68 8 Z"
-          className="fill-paper/40 stroke-ink/55"
+          className="fill-paper/40 stroke-ink/40"
           strokeWidth="1.35"
           strokeLinecap="round"
           strokeLinejoin="round"
@@ -475,7 +475,7 @@ function TopLine({ value, hasGoal }: { value: number; hasGoal: boolean }) {
         <path
           d="M0 15 C140 13, 250 17, 380 14 S650 16, 815 14 S930 15, 1000 15"
           pathLength="1"
-          className="line-draw fill-none stroke-ink/25"
+          className="line-draw fill-none stroke-ink/40"
           strokeWidth="1"
         />
         {hasGoal && (
@@ -494,20 +494,20 @@ function TopLine({ value, hasGoal }: { value: number; hasGoal: boolean }) {
       >
         <path
           d="M0 15 C3 15 5.5 15.3 8 16"
-          className="line-draw fill-none stroke-ink/25"
+          className="line-draw fill-none stroke-ink/40"
           strokeWidth="1"
           strokeLinecap="round"
         />
         <path
           d="M8 16 C8.8 11 9 8.5 12 7 C18 4.5 26 6.2 31 12.5 L31 30.5 C24 25.5 15 25 7 29 L8 16 M31 12.5 C36 6.2 44 4.5 50 7 C53 8.5 53.2 11 54 16 L55 29 C47 25 38 25.5 31 30.5 M7 29 C15 27 24 27.5 31 33 C38 27.5 47 27 55 29"
-          className="book-line fill-none stroke-ink/60"
+          className="book-line fill-none stroke-ink/40"
           strokeWidth="1.35"
           strokeLinecap="round"
           strokeLinejoin="round"
         />
         <path
           d="M31 30.5 C31 33 32 34 34 34.5 C36 35 36.5 36 36 38"
-          className="fill-none stroke-ink/60"
+          className="fill-none stroke-ink/40"
           strokeWidth="1.35"
           strokeLinecap="round"
         />
