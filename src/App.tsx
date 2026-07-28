@@ -6,7 +6,6 @@ import {
   ChevronRight,
   Heart,
   Library,
-  LogOut,
   Menu,
   Plus,
   Search,
@@ -27,7 +26,6 @@ import {
   pickStillaSpreadsheet,
   readStillaSpreadsheet,
   requestGoogleToken,
-  revokeGoogleToken,
   writeStillaSpreadsheet,
 } from "./services/googleSheets";
 import type { Book, BookStatus, Feedback } from "./types";
@@ -309,25 +307,6 @@ export default function App() {
     }
   }
 
-  async function logout() {
-    const token = googleToken;
-    setGoogleToken(null);
-    setSheetReady(false);
-    setSyncState("idle");
-    setSyncMessage(
-      "Du är utloggad. Ditt valda ark ligger kvar och kan anslutas igen när du vill.",
-    );
-    setPage("settings");
-    setMobileNav(false);
-    if (token) {
-      try {
-        await revokeGoogleToken(token);
-      } catch {
-        // Den lokala sessionen är redan avslutad även om Google inte kan nås.
-      }
-    }
-  }
-
   return (
     <div className="min-h-screen">
       <a className="skip-link" href="#main-content">
@@ -432,7 +411,6 @@ export default function App() {
         open={mobileNav}
         close={() => setMobileNav(false)}
         navigate={navigate}
-        logout={logout}
       />
     </div>
   );
@@ -1169,12 +1147,10 @@ function MobileNavigation({
   open,
   close,
   navigate,
-  logout,
 }: {
   open: boolean;
   close: () => void;
   navigate: (page: Page) => void;
-  logout: () => void;
 }) {
   return (
     <Dialog.Root open={open} onOpenChange={(value) => !value && close()}>
@@ -1190,9 +1166,6 @@ function MobileNavigation({
             <button onClick={() => navigate("add")}><Plus /> Lägg till bok</button>
             <button onClick={() => navigate("settings")}><Settings /> Inställningar</button>
           </nav>
-          <button className="logout-link" onClick={logout}>
-            <LogOut /> Logga ut
-          </button>
         </Dialog.Content>
       </Dialog.Portal>
     </Dialog.Root>

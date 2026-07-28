@@ -1,0 +1,32 @@
+{
+  "id": "/stilla-books/",
+  "name": "Stilla Books",
+  "short_name": "Stilla",
+  "description": "En stilla plats för böcker, läsning och eftertanke.",
+  "lang": "sv",
+  "start_url": "/stilla-books/",
+  "scope": "/stilla-books/",
+  "display": "standalone",
+  "background_color": "#FAF8F3",
+  "theme_color": "#FAF8F3",
+  "icons": [
+    {
+      "src": "icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "icons/icon-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}

@@ -68,8 +68,6 @@ button:focus-visible, a:focus-visible { outline:2px solid #a8b69a; outline-offse
 .mobile-dialog { @apply fixed inset-y-0 right-0 z-[70] flex w-[min(360px,90vw)] flex-col bg-paper p-8 outline-none data-[state=open]:animate-[slideLeft_.3s_ease-out]; }
 .mobile-dialog nav button { @apply flex items-center gap-4 font-serif text-2xl text-ink/80 transition-colors hover:text-ink; }
 .mobile-dialog nav svg { @apply size-5 stroke-[1.2]; }
-.logout-link { @apply mt-auto flex items-center gap-4 font-serif text-2xl text-ink/80 transition-colors hover:text-ink; }
-.logout-link svg { @apply size-5 stroke-[1.2]; }
 .sage-dark { color: #839277; }
 
 @keyframes fadeIn { from { opacity:0 } to { opacity:1 } }

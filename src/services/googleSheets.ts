@@ -31,7 +31,6 @@ declare global {
             scope: string;
             callback: (response: TokenResponse) => void;
           }): { requestAccessToken: (options?: { prompt?: string }) => void };
-          revoke(token: string, callback: () => void): void;
         };
       };
       picker?: {
@@ -141,13 +140,6 @@ export async function requestGoogleToken(prompt: "" | "consent" = "consent") {
       },
     });
     client.requestAccessToken({ prompt });
-  });
-}
-
-export async function revokeGoogleToken(token: string) {
-  await loadGoogleIdentity();
-  return new Promise<void>((resolve) => {
-    window.google!.accounts.oauth2.revoke(token, resolve);
   });
 }
 
