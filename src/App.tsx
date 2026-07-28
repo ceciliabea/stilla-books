@@ -378,7 +378,7 @@ export default function App() {
       </main>
       <footer className="page-shell pb-8 pt-12 text-xs text-muted">
         <FooterBookmark />
-        <div className="mt-7 flex flex-col justify-between gap-4 border-t border-ink/10 pt-6 sm:flex-row sm:items-center">
+        <div className="flex flex-col justify-between gap-4 pt-6 sm:flex-row sm:items-center">
           <p>Stilla Books · En privat plats för läsning och eftertanke.</p>
           <nav className="flex gap-5" aria-label="Juridisk information">
             <a
@@ -419,12 +419,12 @@ export default function App() {
 
 function FooterBookmark() {
   return (
-    <svg
-      viewBox="0 0 160 132"
-      className="mx-auto h-[116px] w-[140px] overflow-visible md:h-32 md:w-40"
-      aria-hidden="true"
-    >
-      <g transform="translate(80 66) rotate(-36) translate(-80 -66)">
+    <div className="relative h-[82px] border-b border-ink/10 md:h-[88px]" aria-hidden="true">
+      <svg
+        viewBox="0 0 160 132"
+        className="absolute bottom-[-10px] left-1/2 h-[88px] w-[106px] -translate-x-1/2 overflow-visible md:h-24 md:w-[118px]"
+      >
+        <g transform="translate(80 66) rotate(-36) translate(-80 -66)">
         <path
           d="M68 8 C64 29 74 40 69 59 C64 78 72 93 71 116 L80 106 L89 116 C88 94 96 78 91 59 C86 40 96 29 92 8 C85 5 75 5 68 8 Z"
           className="fill-paper/40 stroke-ink/55"
@@ -458,8 +458,9 @@ function FooterBookmark() {
           <ellipse cx="80" cy="18" rx="3.6" ry="6.5" transform="rotate(288 80 18)" />
           <circle cx="80" cy="18" r="2.2" className="fill-paper" />
         </g>
-      </g>
-    </svg>
+        </g>
+      </svg>
+    </div>
   );
 }
 
