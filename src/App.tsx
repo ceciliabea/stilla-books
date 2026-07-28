@@ -377,9 +377,11 @@ export default function App() {
         )}
       </main>
       <footer className="page-shell pb-8 pt-12 text-xs text-muted">
-        <FooterBookmark />
-        <div className="flex flex-col justify-between gap-4 pt-6 sm:flex-row sm:items-center">
-          <p>Stilla Books · En plats för reflektion mellan sidorna.</p>
+        <div className="flex min-h-[76px] flex-col justify-between gap-4 border-t border-ink/40 pt-6 sm:flex-row sm:items-start">
+          <div className="relative w-fit max-w-[calc(100%-3.5rem)]">
+            <p>Stilla Books · En plats för reflektion mellan sidorna.</p>
+            <FooterBookmark />
+          </div>
           <nav className="flex gap-5" aria-label="Juridisk information">
             <a
               className="transition-colors hover:text-ink"
@@ -419,48 +421,35 @@ export default function App() {
 
 function FooterBookmark() {
   return (
-    <div className="relative h-[82px] border-b border-ink/40 md:h-[88px]" aria-hidden="true">
-      <svg
-        viewBox="0 0 160 132"
-        className="absolute bottom-[-10px] left-1/2 h-[88px] w-[106px] -translate-x-1/2 overflow-visible md:h-24 md:w-[118px]"
-      >
-        <g transform="translate(80 66) rotate(-36) translate(-80 -66)">
-        <path
-          d="M68 8 C64 29 74 40 69 59 C64 78 72 93 71 116 L80 106 L89 116 C88 94 96 78 91 59 C86 40 96 29 92 8 C85 5 75 5 68 8 Z"
-          className="fill-paper/40 stroke-ink/40"
-          strokeWidth="1.35"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        />
-        <path
-          d="M79 93 C80 78 77 64 80 50 C82 39 82 30 80 22"
-          className="fill-none stroke-sage"
-          strokeWidth="1.4"
-          strokeLinecap="round"
-        />
-        <path
-          d="M79 77 C73 74 70 69 70 65 C75 65 79 68 80 72 C84 67 88 64 93 64 C92 69 87 73 80 75"
-          className="fill-sage/75"
-        />
-        <path
-          d="M80 57 C75 55 72 51 72 47 C77 47 80 49 81 53 C84 49 88 47 92 48 C91 52 87 56 81 57"
-          className="fill-sage/75"
-        />
-        <path
-          d="M80 40 C76 38 73 35 73 31 C77 31 80 33 81 36 C84 33 87 31 91 32 C90 36 86 39 81 40"
-          className="fill-sage/75"
-        />
-        <g className="fill-sage/85">
-          <ellipse cx="80" cy="18" rx="3.6" ry="6.5" />
-          <ellipse cx="80" cy="18" rx="3.6" ry="6.5" transform="rotate(72 80 18)" />
-          <ellipse cx="80" cy="18" rx="3.6" ry="6.5" transform="rotate(144 80 18)" />
-          <ellipse cx="80" cy="18" rx="3.6" ry="6.5" transform="rotate(216 80 18)" />
-          <ellipse cx="80" cy="18" rx="3.6" ry="6.5" transform="rotate(288 80 18)" />
-          <circle cx="80" cy="18" r="2.2" className="fill-paper" />
-        </g>
-        </g>
-      </svg>
-    </div>
+    <svg
+      viewBox="0 0 75 86"
+      className="absolute left-[calc(100%+0.5rem)] top-[-25px] h-[58px] w-[50px] overflow-visible"
+      aria-hidden="true"
+    >
+      <path
+        d="M12 0 C17 -1 22 0 26 4 C28 17 36 27 45 38 C54 49 58 62 62 76 L54 71 L50 82 C46 68 42 57 34 47 C25 36 17 23 12 0 Z"
+        className="fill-paper stroke-ink/40"
+        strokeWidth="1.2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M22 13 C27 24 35 33 41 43 C47 52 50 61 52 68"
+        className="fill-none stroke-sage"
+        strokeWidth="1.25"
+        strokeLinecap="round"
+      />
+      <path d="M32 30 C27 29 24 26 23 23 C27 22 31 24 33 27 C34 23 37 20 41 20 C41 24 38 28 33 30" className="fill-sage/75" />
+      <path d="M43 49 C38 47 35 44 35 40 C39 40 43 42 44 46 C46 42 49 40 53 40 C52 44 49 48 44 49" className="fill-sage/75" />
+      <g className="fill-sage/85">
+        <ellipse cx="20" cy="10" rx="2.8" ry="5" />
+        <ellipse cx="20" cy="10" rx="2.8" ry="5" transform="rotate(72 20 10)" />
+        <ellipse cx="20" cy="10" rx="2.8" ry="5" transform="rotate(144 20 10)" />
+        <ellipse cx="20" cy="10" rx="2.8" ry="5" transform="rotate(216 20 10)" />
+        <ellipse cx="20" cy="10" rx="2.8" ry="5" transform="rotate(288 20 10)" />
+        <circle cx="20" cy="10" r="1.7" className="fill-paper" />
+      </g>
+    </svg>
   );
 }
 
