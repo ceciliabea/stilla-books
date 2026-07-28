@@ -426,6 +426,11 @@ function FooterBookmark() {
       className="absolute left-[calc(100%+0.5rem)] top-[-25px] h-[58px] w-[50px] overflow-visible"
       aria-hidden="true"
     >
+      <defs>
+        <clipPath id="footer-bookmark-clip">
+          <path d="M12 0 C17 -1 22 0 26 4 C28 17 36 27 45 38 C54 49 58 62 62 76 L54 71 L50 82 C46 68 42 57 34 47 C25 36 17 23 12 0 Z" />
+        </clipPath>
+      </defs>
       <path
         d="M12 0 C17 -1 22 0 26 4 C28 17 36 27 45 38 C54 49 58 62 62 76 L54 71 L50 82 C46 68 42 57 34 47 C25 36 17 23 12 0 Z"
         className="fill-paper stroke-ink/40"
@@ -433,21 +438,23 @@ function FooterBookmark() {
         strokeLinecap="round"
         strokeLinejoin="round"
       />
-      <path
-        d="M22 13 C27 24 35 33 41 43 C47 52 50 61 52 68"
-        className="fill-none stroke-sage"
-        strokeWidth="1.25"
-        strokeLinecap="round"
-      />
-      <path d="M32 30 C27 29 24 26 23 23 C27 22 31 24 33 27 C34 23 37 20 41 20 C41 24 38 28 33 30" className="fill-sage/75" />
-      <path d="M43 49 C38 47 35 44 35 40 C39 40 43 42 44 46 C46 42 49 40 53 40 C52 44 49 48 44 49" className="fill-sage/75" />
-      <g className="fill-sage/85">
-        <ellipse cx="20" cy="10" rx="2.8" ry="5" />
-        <ellipse cx="20" cy="10" rx="2.8" ry="5" transform="rotate(72 20 10)" />
-        <ellipse cx="20" cy="10" rx="2.8" ry="5" transform="rotate(144 20 10)" />
-        <ellipse cx="20" cy="10" rx="2.8" ry="5" transform="rotate(216 20 10)" />
-        <ellipse cx="20" cy="10" rx="2.8" ry="5" transform="rotate(288 20 10)" />
-        <circle cx="20" cy="10" r="1.7" className="fill-paper" />
+      <g clipPath="url(#footer-bookmark-clip)">
+        <path
+          d="M22 13 C27 24 35 33 41 43 C47 52 50 61 52 68"
+          className="fill-none stroke-sage"
+          strokeWidth="1.25"
+          strokeLinecap="round"
+        />
+        <path d="M32 30 C27 29 24 26 23 23 C27 22 31 24 33 27 C34 23 37 20 41 20 C41 24 38 28 33 30" className="fill-sage/75" />
+        <path d="M43 49 C38 47 35 44 35 40 C39 40 43 42 44 46 C46 42 49 40 53 40 C52 44 49 48 44 49" className="fill-sage/75" />
+        <g className="fill-sage/85">
+          <ellipse cx="20" cy="10" rx="2.8" ry="5" />
+          <ellipse cx="20" cy="10" rx="2.8" ry="5" transform="rotate(72 20 10)" />
+          <ellipse cx="20" cy="10" rx="2.8" ry="5" transform="rotate(144 20 10)" />
+          <ellipse cx="20" cy="10" rx="2.8" ry="5" transform="rotate(216 20 10)" />
+          <ellipse cx="20" cy="10" rx="2.8" ry="5" transform="rotate(288 20 10)" />
+          <circle cx="20" cy="10" r="1.7" className="fill-paper" />
+        </g>
       </g>
     </svg>
   );
