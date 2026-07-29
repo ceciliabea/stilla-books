@@ -1,6 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Book } from "../types";
-import { findGoogleBookCoverCandidates } from "./googleBooks";
+import {
+  findGoogleBookCoverCandidates,
+  findGoogleBookDescriptionByIsbn,
+} from "./googleBooks";
 
 const book: Book = {
   id: "book-1",
@@ -187,5 +190,87 @@ describe("Google Books som omslagskälla", () => {
       id: "google:safe-title-match",
       sourceUrl: "https://books.google.com/books?id=safe-title-match",
     });
+  });
+});
+
+describe("Google Books som säker beskrivningsreserv", () => {
+  it("hämtar svensk beskrivning endast via exakt ISBN och rensar HTML", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          items: [
+            {
+              id: "swedish-volume",
+              volumeInfo: {
+                language: "sv",
+                description:
+                  "En <b>stillsam</b> berättelse<br>om minne &amp; kärlek.",
+                infoLink:
+                  "http://books.google.com/books?id=swedish-volume",
+                industryIdentifiers: [
+                  { type: "ISBN_13", identifier: "9789186480844" },
+                ],
+              },
+            },
+          ],
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await findGoogleBookDescriptionByIsbn(
+      "978-91-86480-84-4",
+      "swe",
+    );
+
+    expect(String(fetchMock.mock.calls[0][0])).toContain(
+      "q=isbn%3A9789186480844",
+    );
+    expect(String(fetchMock.mock.calls[0][0])).toContain("langRestrict=sv");
+    expect(result).toEqual({
+      description: "En stillsam berättelse om minne & kärlek.",
+      googleBooksId: "swedish-volume",
+      sourceUrl: "https://books.google.com/books?id=swedish-volume",
+    });
+  });
+
+  it("avvisar beskrivningar på fel språk eller utan exakt ISBN", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            items: [
+              {
+                id: "spanish-volume",
+                volumeInfo: {
+                  language: "es",
+                  description: "Una descripción en español.",
+                  industryIdentifiers: [
+                    { type: "ISBN_13", identifier: "9789186480844" },
+                  ],
+                },
+              },
+              {
+                id: "wrong-isbn",
+                volumeInfo: {
+                  language: "sv",
+                  description: "En svensk men felaktig utgåva.",
+                  industryIdentifiers: [
+                    { type: "ISBN_13", identifier: "9780000000000" },
+                  ],
+                },
+              },
+            ],
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      ),
+    );
+
+    await expect(
+      findGoogleBookDescriptionByIsbn("9789186480844", "sv"),
+    ).resolves.toBeUndefined();
   });
 });

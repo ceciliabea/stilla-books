@@ -10,6 +10,7 @@ interface GoogleVolume {
     language?: string;
     publisher?: string;
     publishedDate?: string;
+    description?: string;
     industryIdentifiers?: { type?: string; identifier?: string }[];
     imageLinks?: Record<string, string>;
     infoLink?: string;
@@ -27,6 +28,55 @@ function normalize(value: string) {
 
 function secureUrl(value?: string) {
   return value?.replace(/^http:/, "https:");
+}
+
+function normalizeIsbn(value?: string) {
+  return value?.replace(/\D/g, "");
+}
+
+function normalizeLanguage(value?: string) {
+  const language = value?.toLocaleLowerCase("sv");
+  if (["sv", "swe"].includes(language ?? "")) return "sv";
+  if (["en", "eng"].includes(language ?? "")) return "en";
+  return undefined;
+}
+
+function plainText(value: string) {
+  return value
+    .replace(/<br\s*\/?>/giu, " ")
+    .replace(/<[^>]+>/gu, " ")
+    .replace(/&nbsp;/giu, " ")
+    .replace(/&amp;/giu, "&")
+    .replace(/&quot;/giu, '"')
+    .replace(/&#39;|&apos;/giu, "'")
+    .replace(/&lt;/giu, "<")
+    .replace(/&gt;/giu, ">")
+    .replace(/\s+/gu, " ")
+    .trim();
+}
+
+async function fetchGoogleVolumes(params: URLSearchParams) {
+  const url = `https://www.googleapis.com/books/v1/volumes?${params.toString()}`;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const response = await fetch(url);
+    if (response.ok) {
+      const data = (await response.json()) as { items?: GoogleVolume[] };
+      return data.items ?? [];
+    }
+    const canRetry = response.status === 429 || response.status >= 500;
+    if (canRetry && attempt < 2) {
+      await new Promise((resolve) =>
+        globalThis.setTimeout(resolve, 300 * (attempt + 1)),
+      );
+      continue;
+    }
+    throw new Error(
+      response.status === 403
+        ? "Google Books API är inte aktiverat för appens API-nyckel."
+        : "Google Books kunde inte nås.",
+    );
+  }
+  return [];
 }
 
 function bestCover(imageLinks?: Record<string, string>) {
@@ -51,31 +101,6 @@ export async function findGoogleBookCoverCandidates(
     .filter((isbn): isbn is string => Boolean(isbn))
     .filter((isbn, index, values) => values.indexOf(isbn) === index)
     .slice(0, 4);
-  async function fetchVolumes(params: URLSearchParams) {
-    const url = `https://www.googleapis.com/books/v1/volumes?${params.toString()}`;
-    for (let attempt = 0; attempt < 3; attempt += 1) {
-      const response = await fetch(url);
-      if (response.ok) {
-        const data = (await response.json()) as { items?: GoogleVolume[] };
-        return data.items ?? [];
-      }
-      const canRetry =
-        response.status === 429 || response.status >= 500;
-      if (canRetry && attempt < 2) {
-        await new Promise((resolve) =>
-          globalThis.setTimeout(resolve, 300 * (attempt + 1)),
-        );
-        continue;
-      }
-      throw new Error(
-        response.status === 403
-          ? "Google Books API är inte aktiverat för appens API-nyckel."
-          : "Google Books kunde inte nås.",
-      );
-    }
-    return [];
-  }
-
   const responses = await Promise.allSettled(
     isbns.map(async (isbn) => {
       const params = new URLSearchParams({
@@ -84,7 +109,7 @@ export async function findGoogleBookCoverCandidates(
         printType: "books",
         key: apiKey,
       });
-      return fetchVolumes(params);
+      return fetchGoogleVolumes(params);
     }),
   );
   const successfulResponses = responses.flatMap((result) =>
@@ -139,7 +164,7 @@ export async function findGoogleBookCoverCandidates(
       printType: "books",
       key: apiKey,
     });
-    const fallbackVolumes = await fetchVolumes(params);
+    const fallbackVolumes = await fetchGoogleVolumes(params);
     return toCoverCandidates(
       fallbackVolumes.filter((volume) => {
         const candidateTitle = normalize(volume.volumeInfo?.title ?? "");
@@ -170,4 +195,43 @@ export async function findGoogleBookCoverCandidates(
     }
     return [];
   }
+}
+
+export async function findGoogleBookDescriptionByIsbn(
+  isbn: string,
+  expectedLanguage: string,
+) {
+  const apiKey = import.meta.env.VITE_GOOGLE_API_KEY;
+  const normalizedIsbn = normalizeIsbn(isbn);
+  const language = normalizeLanguage(expectedLanguage);
+  if (!apiKey || !normalizedIsbn || !language) return undefined;
+
+  const volumes = await fetchGoogleVolumes(
+    new URLSearchParams({
+      q: `isbn:${normalizedIsbn}`,
+      langRestrict: language,
+      maxResults: "10",
+      printType: "books",
+      key: apiKey,
+    }),
+  );
+  const match = volumes.find((volume) => {
+    const info = volume.volumeInfo;
+    const description = info?.description?.trim();
+    const volumeLanguage = normalizeLanguage(info?.language);
+    const hasExactIsbn = info?.industryIdentifiers?.some(
+      (identifier) =>
+        normalizeIsbn(identifier.identifier) === normalizedIsbn,
+    );
+    return Boolean(description && volumeLanguage === language && hasExactIsbn);
+  });
+  if (!match?.volumeInfo?.description) return undefined;
+
+  return {
+    description: plainText(match.volumeInfo.description),
+    googleBooksId: match.id,
+    sourceUrl:
+      secureUrl(match.volumeInfo.infoLink) ??
+      `https://books.google.com/books?id=${encodeURIComponent(match.id)}`,
+  };
 }

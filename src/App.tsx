@@ -54,7 +54,10 @@ import type {
   BookCoverCandidate,
   BookMetadataCandidate,
 } from "./services/bookCatalog";
-import { findGoogleBookCoverCandidates } from "./services/googleBooks";
+import {
+  findGoogleBookCoverCandidates,
+  findGoogleBookDescriptionByIsbn,
+} from "./services/googleBooks";
 import {
   findLibrisMetadataCandidates,
   metadataFromLibrisCandidate,
@@ -70,6 +73,15 @@ import type {
 
 type SyncState = "idle" | "connecting" | "syncing" | "synced" | "error";
 const CURRENT_YEAR = new Date().getFullYear();
+
+function hasUsefulDescription(value: string) {
+  const normalized = value.trim().toLocaleLowerCase("sv");
+  return Boolean(
+    normalized &&
+      !normalized.startsWith("beskrivning saknas") &&
+      !/^först utgiven \d{4}\.?$/u.test(normalized),
+  );
+}
 
 interface SheetConnection {
   spreadsheetId: string;
@@ -409,6 +421,28 @@ export default function App() {
     candidate: BookMetadataCandidate,
   ) {
     const metadata = metadataFromLibrisCandidate(book, candidate);
+    const descriptionIsProtected = book.manualFields?.includes("description");
+    if (
+      !descriptionIsProtected &&
+      !hasUsefulDescription(book.description) &&
+      !candidate.description &&
+      candidate.isbn13
+    ) {
+      try {
+        const googleDescription = await findGoogleBookDescriptionByIsbn(
+          candidate.isbn13,
+          candidate.languages[0] ?? "",
+        );
+        if (googleDescription) {
+          metadata.description = googleDescription.description;
+          metadata.descriptionSource = "google_books";
+          metadata.descriptionSourceUrl = googleDescription.sourceUrl;
+          metadata.googleBooksId = googleDescription.googleBooksId;
+        }
+      } catch {
+        // Libris-informationen kan fortfarande sparas om Google Books är tillfälligt otillgängligt.
+      }
+    }
     return updateBook(book.id, metadata);
   }
 
@@ -1106,14 +1140,38 @@ function AddBookPage({
 
     setAddingKey(result.key);
     setError("");
-    const description = result.description
+    let description = result.description
       ? shortenDescription(result.description)
-      : "Beskrivning saknas.";
+      : "";
+    let descriptionSource: Book["descriptionSource"] = result.description
+      ? "libris"
+      : undefined;
+    let descriptionSourceUrl = result.description
+      ? result.sourceUrl
+      : undefined;
+    let googleBooksId: string | undefined;
+    if (!description && result.isbn13) {
+      try {
+        const googleDescription = await findGoogleBookDescriptionByIsbn(
+          result.isbn13,
+          result.languages[0] ?? "",
+        );
+        if (googleDescription) {
+          description = googleDescription.description;
+          descriptionSource = "google_books";
+          descriptionSourceUrl = googleDescription.sourceUrl;
+          googleBooksId = googleDescription.googleBooksId;
+        }
+      } catch {
+        // Boken kan fortfarande läggas till med en tom, ärlig beskrivning.
+      }
+    }
 
     const candidate: Book = {
       id: crypto.randomUUID(),
       externalId: result.key,
       librisId: result.key,
+      googleBooksId,
       isbn13: result.isbn13,
       title: result.title,
       subtitle: result.subtitle,
@@ -1121,6 +1179,8 @@ function AddBookPage({
       translators: result.translators,
       coverSource: "stilla",
       description,
+      descriptionSource,
+      descriptionSourceUrl,
       genres: result.subjects,
       language: result.languages[0],
       publisher: result.publisher,
@@ -1699,7 +1759,28 @@ function BookPanel({
                     />
                   ) : (
                     <>
-                      <p className="mt-7 font-serif text-lg leading-relaxed text-ink/75">{book.description}</p>
+                      <p
+                        className={cn(
+                          "mt-7 font-serif text-lg leading-relaxed",
+                          book.description
+                            ? "line-clamp-5 text-ink/75"
+                            : "italic text-muted",
+                        )}
+                      >
+                        {book.description || "Beskrivning saknas ännu."}
+                      </p>
+                      {book.descriptionSourceUrl && (
+                        <a
+                          href={book.descriptionSourceUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="mt-2 self-start text-[9px] tracking-wide text-muted/75 underline decoration-ink/15 underline-offset-2"
+                        >
+                          {book.descriptionSource === "google_books"
+                            ? "Beskrivning via Google Books"
+                            : "Beskrivning via Libris"}
+                        </a>
+                      )}
                       {Boolean(
                         book.publisher ||
                           book.publishedYear ||

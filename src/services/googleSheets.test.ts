@@ -14,6 +14,8 @@ const book: Book = {
   authors: ["Susanna Clarke"],
   coverUrl: "https://example.com/piranesi.jpg",
   description: "Ett gåtfullt hus.",
+  descriptionSource: "google_books",
+  descriptionSourceUrl: "https://books.google.com/books?id=piranesi",
   genres: ["Fantasy", "Roman"],
   language: "sv",
   status: "reading",
@@ -94,7 +96,7 @@ describe("Sheets-synk", () => {
     const booksWrite = body.data.find((entry) => entry.range.startsWith("Books!"));
     const settingsWrite = body.data.find((entry) => entry.range.startsWith("Settings!"));
 
-    expect(booksWrite?.range).toBe("Books!A2:AD2");
+    expect(booksWrite?.range).toBe("Books!A2:AF2");
     expect(booksWrite?.values[0][BOOK_HEADERS.indexOf("status")]).toBe("reading");
     expect(settingsWrite?.values[0]).toEqual([new Date().getFullYear(), 12]);
   });
@@ -179,14 +181,70 @@ describe("Sheets-synk", () => {
     expect(body.data).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          range: "Books!Q1:AD1",
+          range: "Books!Q1:AF1",
           values: [BOOK_HEADERS.slice(16)],
         }),
         expect.objectContaining({
-          range: "Books!A2:AD2",
+          range: "Books!A2:AF2",
         }),
       ]),
     );
+  });
+
+  it("kompletterar ett 30-kolumners ark med endast beskrivningskällorna", async () => {
+    const previousHeaders = BOOK_HEADERS.slice(0, 30);
+    const previousBook = {
+      ...book,
+      descriptionSource: undefined,
+      descriptionSourceUrl: undefined,
+    };
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            valueRanges: [
+              {
+                values: [
+                  previousHeaders,
+                  bookToSheetRow(previousBook).slice(0, 30).map(String),
+                ],
+              },
+              { values: [["year", "readingGoal"]] },
+            ],
+          }),
+          {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({}), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await writeStillaSpreadsheet(
+      "token",
+      "sheet-id",
+      [previousBook],
+      null,
+    );
+
+    const request = fetchMock.mock.calls[1][1] as RequestInit;
+    const body = JSON.parse(String(request.body)) as {
+      data: { range: string; values: (string | boolean | number)[][] }[];
+    };
+    expect(body.data).toEqual([
+      {
+        range: "Books!AE1:AF1",
+        majorDimension: "ROWS",
+        values: [["descriptionSource", "descriptionSourceUrl"]],
+      },
+    ]);
   });
 
   it("lämnar en nyare fjärrversion av en bok orörd", async () => {

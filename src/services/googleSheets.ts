@@ -3,6 +3,7 @@ import type {
   BookStatus,
   CoverSource,
   CoverTone,
+  DescriptionSource,
   Feedback,
   ManualBookField,
 } from "../types";
@@ -86,9 +87,11 @@ export const BOOK_HEADERS = [
   "edition",
   "metadataUpdatedAt",
   "manualFields",
+  "descriptionSource",
+  "descriptionSourceUrl",
 ] as const;
 const REQUIRED_BOOK_HEADERS = BOOK_HEADERS.slice(0, 16);
-const BOOK_LAST_COLUMN = "AD";
+const BOOK_LAST_COLUMN = "AF";
 
 const SETTINGS_HEADERS = ["year", "readingGoal"] as const;
 
@@ -331,6 +334,12 @@ function parseCoverSource(value: string): CoverSource | undefined {
     : undefined;
 }
 
+function parseDescriptionSource(value: string): DescriptionSource | undefined {
+  return ["libris", "google_books"].includes(value)
+    ? (value as DescriptionSource)
+    : undefined;
+}
+
 function parseManualFields(value: string): ManualBookField[] | undefined {
   const fields = parseStringArray(value).filter((field): field is ManualBookField =>
     [
@@ -388,6 +397,8 @@ export function sheetRowToBook(row: string[]): Book | null {
     coverSource: parseCoverSource(values.coverSource),
     coverSourceUrl: values.coverSourceUrl || undefined,
     description: values.description,
+    descriptionSource: parseDescriptionSource(values.descriptionSource),
+    descriptionSourceUrl: values.descriptionSourceUrl || undefined,
     genres: parseStringArray(values.genres),
     language: values.language || undefined,
     publisher: values.publisher || undefined,
@@ -423,6 +434,8 @@ export function bookToSheetRow(book: Book) {
     coverSource: book.coverSource ?? "",
     coverSourceUrl: book.coverSourceUrl ?? "",
     description: book.description,
+    descriptionSource: book.descriptionSource ?? "",
+    descriptionSourceUrl: book.descriptionSourceUrl ?? "",
     genres: JSON.stringify(book.genres),
     language: book.language ?? "",
     publisher: book.publisher ?? "",

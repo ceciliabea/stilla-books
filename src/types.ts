@@ -7,6 +7,7 @@ export type CoverSource =
   | "open_library"
   | "custom"
   | "stilla";
+export type DescriptionSource = "libris" | "google_books";
 
 export type ManualBookField =
   | "title"
@@ -35,6 +36,8 @@ export interface Book {
   coverSource?: CoverSource;
   coverSourceUrl?: string;
   description: string;
+  descriptionSource?: DescriptionSource;
+  descriptionSourceUrl?: string;
   genres: string[];
   language?: string;
   publisher?: string;

@@ -40,8 +40,9 @@ När appen åter får fokus läses arket om, så att ändringar från exempelvis
 Libris är den ledande källan för svenska titlar, utgåvor, ISBN, förlag,
 utgivningsår, översättare och ämnesord. Google Books används endast för
 ISBN-matchade omslagsförslag och visas med Google-attribution och länk till
-källposten. Open Library är reservkälla för omslag. Google Books-beskrivningar
-importeras inte.
+källposten. Open Library är reservkälla för omslag. När Libris saknar
+beskrivning får Google Books användas som reserv endast vid exakt ISBN-matchning
+och samma språk som Libris-utgåvan. Källan visas diskret i bokpanelen.
 
 Manuellt redigerade metadatafält markeras i arket och skrivs inte över av en
 senare Libris-uppdatering. Ett valt omslag ändras aldrig när bokinformationen

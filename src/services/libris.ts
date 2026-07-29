@@ -403,6 +403,10 @@ export function metadataFromLibrisCandidate(
     candidate.translators.length ? candidate.translators : undefined,
   );
   assign("description", candidate.description);
+  if (candidate.description && !manualFields.has("description")) {
+    metadata.descriptionSource = "libris";
+    metadata.descriptionSourceUrl = candidate.sourceUrl;
+  }
   assign("genres", candidate.subjects.length ? candidate.subjects : undefined);
   assign("language", candidate.languages[0]);
   assign("publisher", candidate.publisher);
