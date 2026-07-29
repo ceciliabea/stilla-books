@@ -32,7 +32,7 @@ afterEach(() => {
 describe("Google Sheets-formatet", () => {
   it("kan skrivas och läsas tillbaka utan att tappa bokdata", () => {
     const row = bookToSheetRow(book).map(String);
-    expect(sheetRowToBook(row)).toEqual(book);
+    expect(sheetRowToBook(row)).toMatchObject(book);
   });
 
   it("faller tillbaka till en säker status vid ett okänt värde", () => {
@@ -94,7 +94,7 @@ describe("Sheets-synk", () => {
     const booksWrite = body.data.find((entry) => entry.range.startsWith("Books!"));
     const settingsWrite = body.data.find((entry) => entry.range.startsWith("Settings!"));
 
-    expect(booksWrite?.range).toBe("Books!A2:Q2");
+    expect(booksWrite?.range).toBe("Books!A2:AD2");
     expect(booksWrite?.values[0][BOOK_HEADERS.indexOf("status")]).toBe("reading");
     expect(settingsWrite?.values[0]).toEqual([new Date().getFullYear(), 12]);
   });
@@ -128,8 +128,8 @@ describe("Sheets-synk", () => {
     expect(String(fetchMock.mock.calls[0][0])).not.toContain("batchClear");
   });
 
-  it("lägger till coverTone-kolumnen utan att skriva om övriga rader", async () => {
-    const legacyHeaders = BOOK_HEADERS.slice(0, -1);
+  it("lägger till nya metadatakolumner utan att radera äldre data", async () => {
+    const legacyHeaders = BOOK_HEADERS.slice(0, 16);
     const remoteBook = {
       ...book,
       coverTone: undefined,
@@ -150,7 +150,7 @@ describe("Sheets-synk", () => {
               {
                 values: [
                   legacyHeaders,
-                  bookToSheetRow(remoteBook).slice(0, -1).map(String),
+                  bookToSheetRow(remoteBook).slice(0, 16).map(String),
                 ],
               },
               { values: [["year", "readingGoal"]] },
@@ -179,11 +179,11 @@ describe("Sheets-synk", () => {
     expect(body.data).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          range: "Books!Q1",
-          values: [["coverTone"]],
+          range: "Books!Q1:AD1",
+          values: [BOOK_HEADERS.slice(16)],
         }),
         expect.objectContaining({
-          range: "Books!A2:Q2",
+          range: "Books!A2:AD2",
         }),
       ]),
     );

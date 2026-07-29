@@ -1,4 +1,11 @@
-import type { Book, BookStatus, CoverTone, Feedback } from "../types";
+import type {
+  Book,
+  BookStatus,
+  CoverSource,
+  CoverTone,
+  Feedback,
+  ManualBookField,
+} from "../types";
 import type { GoogleAuthorization } from "../lib/googleSession";
 
 const DRIVE_FILE_SCOPE = "https://www.googleapis.com/auth/drive.file";
@@ -66,8 +73,22 @@ export const BOOK_HEADERS = [
   "createdAt",
   "updatedAt",
   "coverTone",
+  "isbn13",
+  "librisId",
+  "googleBooksId",
+  "coverSource",
+  "coverSourceUrl",
+  "subtitle",
+  "translators",
+  "publisher",
+  "publishedYear",
+  "pageCount",
+  "edition",
+  "metadataUpdatedAt",
+  "manualFields",
 ] as const;
-const REQUIRED_BOOK_HEADERS = BOOK_HEADERS.slice(0, -1);
+const REQUIRED_BOOK_HEADERS = BOOK_HEADERS.slice(0, 16);
+const BOOK_LAST_COLUMN = "AD";
 
 const SETTINGS_HEADERS = ["year", "readingGoal"] as const;
 
@@ -302,18 +323,77 @@ function parseCoverTone(value: string): CoverTone | undefined {
     : undefined;
 }
 
+function parseCoverSource(value: string): CoverSource | undefined {
+  return ["libris", "google_books", "open_library", "custom", "stilla"].includes(
+    value,
+  )
+    ? (value as CoverSource)
+    : undefined;
+}
+
+function parseManualFields(value: string): ManualBookField[] | undefined {
+  const fields = parseStringArray(value).filter((field): field is ManualBookField =>
+    [
+      "title",
+      "subtitle",
+      "authors",
+      "translators",
+      "description",
+      "genres",
+      "language",
+      "publisher",
+      "publishedYear",
+      "pageCount",
+      "edition",
+    ].includes(field),
+  );
+  return fields.length ? fields : undefined;
+}
+
+function hasCompatibleBookHeaders(headers: string[]) {
+  return (
+    REQUIRED_BOOK_HEADERS.every((header, index) => headers[index] === header) &&
+    headers.every(
+      (header, index) =>
+        !header || index >= BOOK_HEADERS.length || header === BOOK_HEADERS[index],
+    )
+  );
+}
+
+function columnName(index: number) {
+  let value = index + 1;
+  let result = "";
+  while (value > 0) {
+    value -= 1;
+    result = String.fromCharCode(65 + (value % 26)) + result;
+    value = Math.floor(value / 26);
+  }
+  return result;
+}
+
 export function sheetRowToBook(row: string[]): Book | null {
   const values = Object.fromEntries(BOOK_HEADERS.map((header, index) => [header, row[index] ?? ""]));
   if (!values.id || !values.title) return null;
   return {
     id: values.id,
     externalId: values.externalId || undefined,
+    librisId: values.librisId || undefined,
+    googleBooksId: values.googleBooksId || undefined,
+    isbn13: values.isbn13 || undefined,
     title: values.title,
+    subtitle: values.subtitle || undefined,
     authors: parseStringArray(values.authors),
+    translators: parseStringArray(values.translators),
     coverUrl: values.coverUrl || undefined,
+    coverSource: parseCoverSource(values.coverSource),
+    coverSourceUrl: values.coverSourceUrl || undefined,
     description: values.description,
     genres: parseStringArray(values.genres),
     language: values.language || undefined,
+    publisher: values.publisher || undefined,
+    publishedYear: values.publishedYear || undefined,
+    pageCount: values.pageCount ? Number(values.pageCount) : undefined,
+    edition: values.edition || undefined,
     status: parseStatus(values.status),
     feedback: parseFeedback(values.feedback),
     isFeaturedReading: parseBoolean(values.isFeaturedReading),
@@ -322,6 +402,8 @@ export function sheetRowToBook(row: string[]): Book | null {
     finishedAt: values.finishedAt || undefined,
     createdAt: values.createdAt || new Date().toISOString().slice(0, 10),
     updatedAt: values.updatedAt || new Date().toISOString().slice(0, 10),
+    metadataUpdatedAt: values.metadataUpdatedAt || undefined,
+    manualFields: parseManualFields(values.manualFields),
     coverTone: parseCoverTone(values.coverTone),
   };
 }
@@ -330,12 +412,23 @@ export function bookToSheetRow(book: Book) {
   const values: Record<(typeof BOOK_HEADERS)[number], string | boolean> = {
     id: book.id,
     externalId: book.externalId ?? "",
+    librisId: book.librisId ?? "",
+    googleBooksId: book.googleBooksId ?? "",
+    isbn13: book.isbn13 ?? "",
     title: book.title,
+    subtitle: book.subtitle ?? "",
     authors: JSON.stringify(book.authors),
+    translators: JSON.stringify(book.translators ?? []),
     coverUrl: book.coverUrl ?? "",
+    coverSource: book.coverSource ?? "",
+    coverSourceUrl: book.coverSourceUrl ?? "",
     description: book.description,
     genres: JSON.stringify(book.genres),
     language: book.language ?? "",
+    publisher: book.publisher ?? "",
+    publishedYear: book.publishedYear ?? "",
+    pageCount: book.pageCount?.toString() ?? "",
+    edition: book.edition ?? "",
     status: book.status,
     feedback: book.feedback ?? "",
     isFeaturedReading: Boolean(book.isFeaturedReading),
@@ -344,6 +437,8 @@ export function bookToSheetRow(book: Book) {
     finishedAt: book.finishedAt ?? "",
     createdAt: book.createdAt,
     updatedAt: book.updatedAt,
+    metadataUpdatedAt: book.metadataUpdatedAt ?? "",
+    manualFields: JSON.stringify(book.manualFields ?? []),
     coverTone: book.coverTone ?? "",
   };
   return BOOK_HEADERS.map((header) => values[header]);
@@ -355,16 +450,14 @@ export async function readStillaSpreadsheet(token: string, spreadsheetId: string
   }>(
     `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(
       spreadsheetId,
-    )}/values:batchGet?ranges=Books!A1:Q&ranges=Settings!A1:B`,
+    )}/values:batchGet?ranges=Books!A1:${BOOK_LAST_COLUMN}&ranges=Settings!A1:B`,
     token,
   );
   const bookRows = result.valueRanges?.[0]?.values ?? [];
   const settingRows = result.valueRanges?.[1]?.values ?? [];
   const headers = bookRows[0] ?? [];
   if (
-    !REQUIRED_BOOK_HEADERS.every(
-      (header, index) => headers[index] === header,
-    )
+    !hasCompatibleBookHeaders(headers)
   ) {
     throw new Error(
       "Arket har inte Stilla Books struktur. Välj ett ark som skapats av appen.",
@@ -391,7 +484,7 @@ export async function writeStillaSpreadsheet(
   const current = await googleRequest<{
     valueRanges?: { values?: string[][] }[];
   }>(
-    `https://sheets.googleapis.com/v4/spreadsheets/${encodedId}/values:batchGet?ranges=Books!A1:Q&ranges=Settings!A1:B`,
+    `https://sheets.googleapis.com/v4/spreadsheets/${encodedId}/values:batchGet?ranges=Books!A1:${BOOK_LAST_COLUMN}&ranges=Settings!A1:B`,
     token,
   );
 
@@ -400,11 +493,7 @@ export async function writeStillaSpreadsheet(
   const bookHeaders = bookRows[0] ?? [];
   const settingHeaders = settingRows[0] ?? [];
   if (
-    !REQUIRED_BOOK_HEADERS.every(
-      (header, index) => bookHeaders[index] === header,
-    ) ||
-    (bookHeaders[BOOK_HEADERS.length - 1] &&
-      bookHeaders[BOOK_HEADERS.length - 1] !== "coverTone")
+    !hasCompatibleBookHeaders(bookHeaders)
   ) {
     throw new Error(
       "Arket har inte Stilla Books struktur. Synkningen avbröts utan att ändra någon data.",
@@ -425,11 +514,12 @@ export async function writeStillaSpreadsheet(
     majorDimension: "ROWS";
     values: (string | boolean | number)[][];
   }[] = [];
-  if (bookHeaders[BOOK_HEADERS.length - 1] !== "coverTone") {
+  if (bookHeaders.length < BOOK_HEADERS.length) {
+    const firstMissingIndex = Math.max(bookHeaders.length, REQUIRED_BOOK_HEADERS.length);
     data.push({
-      range: "Books!Q1",
+      range: `Books!${columnName(firstMissingIndex)}1:${BOOK_LAST_COLUMN}1`,
       majorDimension: "ROWS",
-      values: [["coverTone"]],
+      values: [BOOK_HEADERS.slice(firstMissingIndex)],
     });
   }
   const remoteById = new Map<
@@ -458,7 +548,7 @@ export async function writeStillaSpreadsheet(
           localUpdatedAt > remoteUpdatedAt);
       if (!localIsNewer) return;
       data.push({
-        range: `Books!A${remote.rowNumber}:Q${remote.rowNumber}`,
+        range: `Books!A${remote.rowNumber}:${BOOK_LAST_COLUMN}${remote.rowNumber}`,
         majorDimension: "ROWS",
         values: [bookToSheetRow(book)],
       });
@@ -466,7 +556,7 @@ export async function writeStillaSpreadsheet(
     }
 
     data.push({
-      range: `Books!A${nextBookRow}:Q${nextBookRow}`,
+      range: `Books!A${nextBookRow}:${BOOK_LAST_COLUMN}${nextBookRow}`,
       majorDimension: "ROWS",
       values: [bookToSheetRow(book)],
     });

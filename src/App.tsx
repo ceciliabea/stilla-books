@@ -47,14 +47,26 @@ import {
   writeStillaSpreadsheet,
 } from "./services/googleSheets";
 import {
-  findBookCoverCandidates,
-  findBookMetadataCandidates,
-  refreshBookMetadataFromCandidate,
+  findBookCoverCandidates as findOpenLibraryCoverCandidates,
   shortenDescription,
-  type BookCoverCandidate,
-  type BookMetadataCandidate,
 } from "./services/openLibrary";
-import type { Book, BookStatus, CoverTone, Feedback } from "./types";
+import type {
+  BookCoverCandidate,
+  BookMetadataCandidate,
+} from "./services/bookCatalog";
+import { findGoogleBookCoverCandidates } from "./services/googleBooks";
+import {
+  findLibrisMetadataCandidates,
+  metadataFromLibrisCandidate,
+  searchLibrisEditions,
+} from "./services/libris";
+import type {
+  Book,
+  BookStatus,
+  CoverTone,
+  Feedback,
+  ManualBookField,
+} from "./types";
 
 type SyncState = "idle" | "connecting" | "syncing" | "synced" | "error";
 const CURRENT_YEAR = new Date().getFullYear();
@@ -386,29 +398,17 @@ export default function App() {
   }
 
   async function refreshOneBook(book: Book) {
-    const candidates = await findBookMetadataCandidates(book);
-    const safeCandidate = candidates.find((candidate) => candidate.safeMatch);
-    if (!safeCandidate) {
-      return { status: "not_found" as const, candidates };
-    }
-    const metadata = await refreshBookMetadataFromCandidate(
-      book,
-      safeCandidate,
-    );
-    const saved = await updateBook(book.id, metadata);
-    return saved
-      ? { status: "updated" as const, candidates: [] }
-      : { status: "error" as const, candidates: [] };
+    const candidates = await findLibrisMetadataCandidates(book);
+    return candidates.length
+      ? { status: "choose" as const, candidates }
+      : { status: "not_found" as const, candidates: [] };
   }
 
   async function chooseBookCandidate(
     book: Book,
     candidate: BookMetadataCandidate,
   ) {
-    const metadata = await refreshBookMetadataFromCandidate(
-      book,
-      candidate,
-    );
+    const metadata = metadataFromLibrisCandidate(book, candidate);
     return updateBook(book.id, metadata);
   }
 
@@ -1055,16 +1055,6 @@ function LibraryPage({
   );
 }
 
-interface SearchResult {
-  key: string;
-  title: string;
-  author_name?: string[];
-  cover_i?: number;
-  first_publish_year?: number;
-  subject?: string[];
-  language?: string[];
-}
-
 function AddBookPage({
   existingBooks,
   onAdd,
@@ -1073,7 +1063,7 @@ function AddBookPage({
   onAdd: (book: Book) => Promise<boolean>;
 }) {
   const [query, setQuery] = useState("");
-  const [results, setResults] = useState<SearchResult[]>([]);
+  const [results, setResults] = useState<BookMetadataCandidate[]>([]);
   const [loading, setLoading] = useState(false);
   const [addingKey, setAddingKey] = useState("");
   const [error, setError] = useState("");
@@ -1084,20 +1074,25 @@ function AddBookPage({
     setLoading(true);
     setError("");
     try {
-      const response = await fetch(`https://openlibrary.org/search.json?q=${encodeURIComponent(query)}&limit=8&fields=key,title,author_name,cover_i,first_publish_year,subject,language`);
-      if (!response.ok) throw new Error("search_failed");
-      const data = (await response.json()) as { docs: SearchResult[] };
-      setResults(data.docs);
+      const candidates = await searchLibrisEditions(query.trim());
+      setResults(candidates);
+      if (!candidates.length) {
+        setError(
+          "Libris hittade ingen tydlig bok. Prova titel tillsammans med författare.",
+        );
+      }
     } catch {
-      setError("Sökningen nådde inte bokkatalogen. Försök igen om en liten stund.");
+      setError("Sökningen nådde inte Libris. Försök igen om en liten stund.");
     } finally {
       setLoading(false);
     }
   }
 
-  async function addResult(result: SearchResult, status: BookStatus) {
+  async function addResult(result: BookMetadataCandidate, status: BookStatus) {
     const today = new Date().toISOString().slice(0, 10);
-    const authors = result.author_name?.slice(0, 3) ?? ["Okänd författare"];
+    const authors = result.authors.length
+      ? result.authors.slice(0, 3)
+      : ["Okänd författare"];
     if (
       isDuplicateBook(existingBooks, {
         externalId: result.key,
@@ -1111,37 +1106,27 @@ function AddBookPage({
 
     setAddingKey(result.key);
     setError("");
-    let description = result.first_publish_year
-      ? `Först utgiven ${result.first_publish_year}.`
+    const description = result.description
+      ? shortenDescription(result.description)
       : "Beskrivning saknas.";
-    let genres = result.subject?.slice(0, 3) ?? [];
-    try {
-      const detailResponse = await fetch(`https://openlibrary.org${result.key}.json`);
-      if (detailResponse.ok) {
-        const details = (await detailResponse.json()) as {
-          description?: string | { value?: string };
-          subjects?: string[];
-        };
-        const detailDescription =
-          typeof details.description === "string"
-            ? details.description
-            : details.description?.value;
-        if (detailDescription) description = shortenDescription(detailDescription);
-        if (details.subjects?.length) genres = details.subjects.slice(0, 3);
-      }
-    } catch {
-      // Sökresultatets enklare metadata är en trygg reserv.
-    }
 
     const candidate: Book = {
       id: crypto.randomUUID(),
       externalId: result.key,
+      librisId: result.key,
+      isbn13: result.isbn13,
       title: result.title,
+      subtitle: result.subtitle,
       authors,
-      coverUrl: result.cover_i ? `https://covers.openlibrary.org/b/id/${result.cover_i}-L.jpg` : undefined,
+      translators: result.translators,
+      coverSource: "stilla",
       description,
-      genres,
-      language: result.language?.includes("swe") ? "sv" : result.language?.[0],
+      genres: result.subjects,
+      language: result.languages[0],
+      publisher: result.publisher,
+      publishedYear: result.publishedYear,
+      pageCount: result.pageCount,
+      edition: result.edition,
       status,
       isFeaturedReading:
         status === "reading" &&
@@ -1149,6 +1134,7 @@ function AddBookPage({
       startedAt: status === "reading" ? today : undefined,
       createdAt: today,
       updatedAt: new Date().toISOString(),
+      metadataUpdatedAt: new Date().toISOString(),
       coverTone: "sage",
     };
     const saved = await onAdd(candidate);
@@ -1179,15 +1165,25 @@ function AddBookPage({
         <div className="search-results mt-14">
           {results.map((result) => (
             <article key={result.key} className="search-result">
-              {result.cover_i ? (
-                <img src={`https://covers.openlibrary.org/b/id/${result.cover_i}-M.jpg`} alt="" className="h-32 w-20 rounded-[2px] object-cover" />
-              ) : (
-                <div className="flex h-32 w-20 items-center justify-center rounded-[2px] bg-paper-soft"><BookOpen className="size-5 stroke-[1] text-muted" /></div>
-              )}
+              <div className="relative flex h-32 w-20 shrink-0 items-center justify-center overflow-hidden rounded-[2px] bg-paper-soft">
+                <BookOpen className="size-5 stroke-[1] text-muted" />
+              </div>
               <div className="min-w-0 flex-1">
                 <h2 className="font-serif text-2xl leading-tight">{result.title}</h2>
-                <p className="mt-1 text-xs text-muted">{result.author_name?.slice(0, 3).join(", ") ?? "Okänd författare"}</p>
-                {result.first_publish_year && <p className="mt-3 text-xs text-muted">Först utgiven {result.first_publish_year}</p>}
+                <p className="mt-1 text-xs text-muted">{result.authors.slice(0, 3).join(", ") || "Okänd författare"}</p>
+                <p className="mt-3 text-xs text-muted">
+                  {[result.publisher, result.publishedYear, result.languages[0] ? languageLabel(result.languages[0]) : undefined]
+                    .filter(Boolean)
+                    .join(" · ")}
+                </p>
+                <a
+                  href={result.sourceUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="mt-2 inline-block text-[10px] text-muted underline decoration-ink/20 underline-offset-2"
+                >
+                  Visa posten i Libris
+                </a>
                 <div className="mt-5 flex flex-wrap gap-2">
                   <Button
                     variant="secondary"
@@ -1346,7 +1342,7 @@ function BookPanel({
   refreshBook: (
     book: Book,
   ) => Promise<{
-    status: "updated" | "not_found" | "error";
+    status: "choose" | "not_found" | "error";
     candidates: BookMetadataCandidate[];
   }>;
   chooseBookCandidate: (
@@ -1416,14 +1412,33 @@ function BookPanel({
       setEditMessage("Titel och minst en författare behöver finnas.");
       return;
     }
+    const nextDescription = draft.description.trim();
+    const nextGenres = draft.genres
+      .split(",")
+      .map((genre) => genre.trim())
+      .filter(Boolean);
+    const changedManualFields = (
+      [
+        title !== book.title ? "title" : undefined,
+        JSON.stringify(authors) !== JSON.stringify(book.authors)
+          ? "authors"
+          : undefined,
+        nextDescription !== book.description ? "description" : undefined,
+        JSON.stringify(nextGenres) !== JSON.stringify(book.genres)
+          ? "genres"
+          : undefined,
+      ] as (ManualBookField | undefined)[]
+    ).filter((field): field is ManualBookField => Boolean(field));
+    const manualFields = [
+      ...(book.manualFields ?? []),
+      ...changedManualFields,
+    ].filter((field, index, fields) => fields.indexOf(field) === index);
     const saved = await updateBook(book.id, {
       title,
       authors,
-      description: draft.description.trim(),
-      genres: draft.genres
-        .split(",")
-        .map((genre) => genre.trim())
-        .filter(Boolean),
+      description: nextDescription,
+      genres: nextGenres,
+      manualFields,
       ...(book.status === "read"
         ? { finishedAt: draft.finishedAt || undefined }
         : {}),
@@ -1443,11 +1458,38 @@ function BookPanel({
     setCoverMessage("");
     setCustomCoverUrl(book.coverUrl ?? "");
     try {
-      const candidates = await findBookCoverCandidates(book);
-      setCoverCandidates(candidates.slice(0, 4));
+      const metadataCandidates = await findLibrisMetadataCandidates(book);
+      const isbnCandidates = metadataCandidates
+        .map((candidate) => candidate.isbn13)
+        .filter((isbn): isbn is string => Boolean(isbn));
+      const [googleResult, openLibraryResult] = await Promise.allSettled([
+        findGoogleBookCoverCandidates(book, isbnCandidates),
+        findOpenLibraryCoverCandidates(book),
+      ]);
+      const google =
+        googleResult.status === "fulfilled" ? googleResult.value.slice(0, 4) : [];
+      const openLibrary =
+        openLibraryResult.status === "fulfilled"
+          ? openLibraryResult.value
+          : [];
+      const candidates = [...google, ...openLibrary]
+        .filter(
+          (candidate, index, values) =>
+            values.findIndex(
+              (other) =>
+                other.coverUrl.split("?")[0] ===
+                candidate.coverUrl.split("?")[0],
+            ) === index,
+        )
+        .slice(0, 6);
+      setCoverCandidates(candidates);
       if (!candidates.length) {
         setCoverMessage(
           "Inga tydliga utgåveomslag hittades. Du kan välja ett av Stillas omslag eller använda en egen bild.",
+        );
+      } else if (googleResult.status === "rejected") {
+        setCoverMessage(
+          "Google Books kunde inte nås, men övriga omslagskällor visas.",
         );
       }
     } catch {
@@ -1460,7 +1502,18 @@ function BookPanel({
     }
   }
 
-  async function chooseCover(changes: Pick<Book, "coverUrl" | "coverTone">) {
+  async function chooseCover(
+    changes: Partial<
+      Pick<
+        Book,
+        | "coverUrl"
+        | "coverTone"
+        | "coverSource"
+        | "coverSourceUrl"
+        | "googleBooksId"
+      >
+    >,
+  ) {
     if (!book) return;
     const saved = await updateBook(book.id, changes);
     if (saved) {
@@ -1478,7 +1531,13 @@ function BookPanel({
       setCoverMessage("Länken till omslaget behöver börja med https://.");
       return;
     }
-    await chooseCover({ coverUrl, coverTone: undefined });
+    await chooseCover({
+      coverUrl,
+      coverTone: undefined,
+      coverSource: "custom",
+      coverSourceUrl: undefined,
+      googleBooksId: undefined,
+    });
   }
 
   async function handleRefresh() {
@@ -1490,11 +1549,9 @@ function BookPanel({
       const result = await refreshBook(book);
       setRefreshCandidates(result.candidates);
       setRefreshMessage(
-        result.status === "updated"
-          ? "Bokinformationen är uppdaterad."
-          : result.status === "not_found" && result.candidates.length > 0
-            ? "Ingen säker matchning hittades. Välj den utgåva som stämmer."
-            : result.status === "not_found"
+        result.status === "choose"
+          ? "Välj den svenska utgåva som stämmer. Inget ändras innan du väljer."
+          : result.status === "not_found"
               ? "Bokkatalogen hittade inga alternativ."
             : "Informationen kunde inte sparas i Google Sheet.",
       );
@@ -1518,6 +1575,7 @@ function BookPanel({
       if (saved) {
         setRefreshCandidates([]);
         setRefreshMessage("Den valda bokinformationen är uppdaterad.");
+        setEditing(false);
       } else {
         setRefreshMessage("Informationen kunde inte sparas i Google Sheet.");
       }
@@ -1549,11 +1607,26 @@ function BookPanel({
                   customCoverUrl={customCoverUrl}
                   setCustomCoverUrl={setCustomCoverUrl}
                   onBack={() => setCoverPickerOpen(false)}
-                  onChooseCover={(coverUrl) =>
-                    chooseCover({ coverUrl, coverTone: undefined })
+                  onChooseCover={(candidate) =>
+                    chooseCover({
+                      coverUrl: candidate.coverUrl,
+                      coverTone: undefined,
+                      coverSource: candidate.source,
+                      coverSourceUrl: candidate.sourceUrl,
+                      googleBooksId:
+                        candidate.source === "google_books"
+                          ? candidate.id.replace(/^google:/, "")
+                          : undefined,
+                    })
                   }
                   onChooseTone={(coverTone) =>
-                    chooseCover({ coverUrl: undefined, coverTone })
+                    chooseCover({
+                      coverUrl: undefined,
+                      coverTone,
+                      coverSource: "stilla",
+                      coverSourceUrl: undefined,
+                      googleBooksId: undefined,
+                    })
                   }
                   onSaveCustom={saveCustomCover}
                   onBrokenCandidate={(id) =>
@@ -1564,17 +1637,32 @@ function BookPanel({
                 />
               ) : (
               <div className="book-dialog-grid">
-                <button
-                  type="button"
-                  className="group relative mx-auto w-40 self-start rounded-[3px] text-left md:w-full"
-                  onClick={openCoverPicker}
-                  aria-label={`Byt omslag till ${book.title}`}
-                >
-                  <BookCover book={book} className="w-full" />
-                  <span className="absolute inset-x-3 bottom-3 rounded-full bg-paper/95 px-3 py-2 text-center text-[11px] text-ink opacity-100 shadow-sm transition-opacity md:opacity-0 md:group-hover:opacity-100 md:group-focus-visible:opacity-100">
-                    Byt omslag
-                  </span>
-                </button>
+                <div className="self-start">
+                  <button
+                    type="button"
+                    className="mx-auto block w-40 rounded-[3px] text-left md:w-full"
+                    onClick={openCoverPicker}
+                    aria-label={`Byt omslag till ${book.title}`}
+                  >
+                    <BookCover book={book} className="w-full" />
+                  </button>
+                  {book.coverSourceUrl && (
+                    <a
+                      href={book.coverSourceUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="mx-auto mt-2 block w-40 text-center text-[9px] tracking-wide text-muted/80 underline decoration-ink/15 underline-offset-2 md:w-full"
+                    >
+                      {book.coverSource === "google_books"
+                        ? "Omslag via Google Books"
+                        : book.coverSource === "libris"
+                          ? "Omslag via Libris"
+                          : book.coverSource === "open_library"
+                            ? "Omslag via Open Library"
+                            : "Omslagskälla"}
+                    </a>
+                  )}
+                </div>
                 <div className="flex flex-col">
                   <p className="eyebrow">{statusLabel[book.status]}</p>
                   <div className="mt-3 flex items-start gap-3">
@@ -1596,14 +1684,35 @@ function BookPanel({
                       setDraft={setDraft}
                       message={editMessage}
                       save={saveEdits}
+                      refreshing={refreshing}
+                      refreshMessage={refreshMessage}
+                      refreshCandidates={refreshCandidates}
+                      choosingCandidate={choosingCandidate}
+                      refresh={handleRefresh}
+                      chooseCandidate={handleCandidateChoice}
                       cancel={() => {
                         setEditing(false);
                         setEditMessage("");
+                        setRefreshMessage("");
+                        setRefreshCandidates([]);
                       }}
                     />
                   ) : (
                     <>
                       <p className="mt-7 font-serif text-lg leading-relaxed text-ink/75">{book.description}</p>
+                      {(book.publisher || book.publishedYear || book.translators?.length) && (
+                        <p className="mt-4 text-[11px] leading-relaxed text-muted">
+                          {[
+                            book.publisher,
+                            book.publishedYear,
+                            book.translators?.length
+                              ? `Översatt av ${book.translators.join(", ")}`
+                              : undefined,
+                          ]
+                            .filter(Boolean)
+                            .join(" · ")}
+                        </p>
+                      )}
                       {book.genres.length > 0 && <p className="mt-5 text-xs tracking-wide text-muted">{book.genres.join(" · ")}</p>}
                       {book.status === "read" && book.finishedAt && (
                         <p className="mt-4 text-xs tracking-wide text-muted">
@@ -1634,38 +1743,8 @@ function BookPanel({
                           <FeedbackButtons book={book} onFeedback={(feedback) => updateBook(book.id, { feedback })} />
                         </div>
                       )}
-                      <div className="mt-10 border-t border-ink/10 pt-5">
-                        <button
-                          type="button"
-                          className="inline-flex items-center gap-2 text-[11px] text-muted transition-colors hover:text-ink"
-                          onClick={handleRefresh}
-                          disabled={refreshing}
-                        >
-                          <RefreshCw
-                            className={cn(
-                              "size-3.5 stroke-[1.3]",
-                              refreshing && "animate-spin",
-                            )}
-                          />
-                          {refreshing
-                            ? "Hämtar bokinformation…"
-                            : "Hämta om bokinformationen"}
-                        </button>
-                        {refreshMessage && (
-                          <p className="mt-3 max-w-sm text-xs leading-relaxed text-muted" role="status">
-                            {refreshMessage}
-                          </p>
-                        )}
-                        {refreshCandidates.length > 0 && (
-                          <MetadataCandidateList
-                            candidates={refreshCandidates}
-                            choosingCandidate={choosingCandidate}
-                            onChoose={handleCandidateChoice}
-                          />
-                        )}
-                      </div>
                       <button
-                        className="mt-6 self-start text-xs text-muted underline decoration-ink/20 underline-offset-4 hover:text-ink"
+                        className="mt-10 self-start border-t border-ink/10 pt-5 text-xs text-muted underline decoration-ink/20 underline-offset-4 hover:text-ink"
                         onClick={async () => {
                           if (window.confirm("Ta bort boken från ditt bibliotek? Den kan återställas senare.")) {
                             const saved = await updateBook(book.id, { archived: true });
@@ -1716,18 +1795,28 @@ function CoverPicker({
   customCoverUrl: string;
   setCustomCoverUrl: (value: string) => void;
   onBack: () => void;
-  onChooseCover: (coverUrl: string) => void;
+  onChooseCover: (candidate: BookCoverCandidate) => void;
   onChooseTone: (tone: CoverTone) => void;
   onSaveCustom: (event: React.FormEvent) => void;
   onBrokenCandidate: (id: string) => void;
 }) {
   const toneOrder: CoverTone[] = ["sage", "sand", "blue", "clay", "ink"];
-  const shownCandidates = candidates.slice(0, 4);
+  const shownCandidates = candidates.slice(0, 6);
   const shownTones = toneOrder.slice(
     0,
-    Math.min(5, Math.max(2, 6 - shownCandidates.length)),
+    Math.min(5, Math.max(2, 8 - shownCandidates.length)),
   );
   const cleanUrl = (value?: string) => value?.split("?")[0];
+  const sourceOrder: BookCoverCandidate["source"][] = [
+    "libris",
+    "google_books",
+    "open_library",
+  ];
+  const sourceHeadings: Record<BookCoverCandidate["source"], string> = {
+    libris: "Svenska utgåvor från Libris",
+    google_books: "Fler utgåvor från Google Books",
+    open_library: "Fler utgåvor från Open Library",
+  };
 
   return (
     <section className="mt-8">
@@ -1755,51 +1844,95 @@ function CoverPicker({
         </div>
       ) : (
         <>
-          <div className="cover-choice-grid mt-10">
-            {shownCandidates.map((candidate) => {
-              const selected =
-                cleanUrl(book.coverUrl) === cleanUrl(candidate.coverUrl);
-              const details = [
-                candidate.publisher,
-                candidate.publishDate,
-                candidate.language
-                  ? languageLabel(candidate.language)
-                  : undefined,
-              ].filter(Boolean);
+          <div className="mt-10 space-y-10">
+            {sourceOrder.map((source) => {
+              const sourceCandidates = shownCandidates.filter(
+                (candidate) => candidate.source === source,
+              );
+              if (!sourceCandidates.length) return null;
               return (
-                <button
-                  key={candidate.id}
-                  type="button"
-                  className="cover-choice"
-                  data-selected={selected}
-                  aria-pressed={selected}
-                  onClick={() => onChooseCover(candidate.coverUrl)}
-                >
-                  <img
-                    src={candidate.coverUrl}
-                    alt={`Omslagsförslag till ${book.title}`}
-                    className="aspect-[2/3] w-full rounded-[3px] object-cover"
-                    onLoad={(event) => {
-                      if (
-                        event.currentTarget.naturalWidth < 120 ||
-                        event.currentTarget.naturalHeight < 180
-                      ) {
-                        onBrokenCandidate(candidate.id);
-                      }
-                    }}
-                    onError={() => onBrokenCandidate(candidate.id)}
-                  />
-                  <span className="mt-3 block font-serif text-base leading-tight">
-                    {candidate.title}
-                  </span>
-                  {details.length > 0 && (
-                    <span className="mt-1 block text-[10px] leading-relaxed text-muted">
-                      {details.join(" · ")}
-                    </span>
-                  )}
-                </button>
+                <section key={source}>
+                  <div className="flex min-h-5 items-center justify-between gap-4">
+                    <p className="text-[10px] uppercase tracking-[0.16em] text-muted">
+                      {sourceHeadings[source]}
+                    </p>
+                    {source === "google_books" && (
+                      <img
+                        src="https://books.google.com/googlebooks/images/poweredby.png"
+                        alt="Powered by Google"
+                        className="h-[12px] w-auto opacity-65"
+                      />
+                    )}
+                  </div>
+                  <div className="cover-choice-grid mt-4">
+                    {sourceCandidates.map((candidate) => {
+                      const selected =
+                        cleanUrl(book.coverUrl) === cleanUrl(candidate.coverUrl);
+                      const details = [
+                        candidate.publisher,
+                        candidate.publishDate,
+                        candidate.language
+                          ? languageLabel(candidate.language)
+                          : undefined,
+                      ].filter(Boolean);
+                      return (
+                        <article key={candidate.id} className="min-w-0">
+                          <button
+                            type="button"
+                            className="cover-choice w-full"
+                            data-selected={selected}
+                            aria-pressed={selected}
+                            onClick={() => onChooseCover(candidate)}
+                          >
+                            <img
+                              src={candidate.coverUrl}
+                              alt={`Omslagsförslag till ${book.title}`}
+                              className="aspect-[2/3] w-full rounded-[3px] object-cover"
+                              onLoad={(event) => {
+                                if (
+                                  event.currentTarget.naturalWidth < 120 ||
+                                  event.currentTarget.naturalHeight < 180 ||
+                                  event.currentTarget.naturalWidth /
+                                    event.currentTarget.naturalHeight >
+                                    0.82
+                                ) {
+                                  onBrokenCandidate(candidate.id);
+                                }
+                              }}
+                              onError={() => onBrokenCandidate(candidate.id)}
+                            />
+                            <span className="mt-3 block font-serif text-base leading-tight">
+                              {candidate.title}
+                            </span>
+                            {details.length > 0 && (
+                              <span className="mt-1 block text-[10px] leading-relaxed text-muted">
+                                {details.join(" · ")}
+                              </span>
+                            )}
+                          </button>
+                          {candidate.sourceUrl && (
+                            <a
+                              href={candidate.sourceUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="mt-1.5 block text-[9px] text-muted/80 underline decoration-ink/15 underline-offset-2"
+                            >
+                              Visa hos {candidate.sourceLabel}
+                            </a>
+                          )}
+                        </article>
+                      );
+                    })}
+                  </div>
+                </section>
               );
             })}
+          </div>
+          <section className="mt-10">
+            <p className="text-[10px] uppercase tracking-[0.16em] text-muted">
+              Stillas egna omslag
+            </p>
+            <div className="cover-choice-grid mt-4">
             {shownTones.map((tone) => {
               const selected =
                 !book.coverUrl && (book.coverTone ?? "sage") === tone;
@@ -1822,7 +1955,8 @@ function CoverPicker({
                 </button>
               );
             })}
-          </div>
+            </div>
+          </section>
           {message && (
             <p className="mt-6 max-w-xl text-xs leading-relaxed text-muted" role="status">
               {message}
@@ -1869,7 +2003,10 @@ function MetadataCandidateList({
     <div className="mt-5 divide-y divide-ink/10 border-y border-ink/10">
       {candidates.map((candidate) => {
         const details = [
-          candidate.firstPublishYear,
+          candidate.publisher,
+          candidate.publishedYear,
+          candidate.edition,
+          candidate.isbn13 ? `ISBN ${candidate.isbn13}` : undefined,
           ...candidate.languages.slice(0, 2).map(languageLabel),
         ].filter(Boolean);
         return (
@@ -1889,6 +2026,7 @@ function MetadataCandidateList({
               )}
             </div>
             <Button
+              type="button"
               variant="secondary"
               className="shrink-0"
               disabled={Boolean(choosingCandidate)}
@@ -1909,6 +2047,12 @@ function BookEditForm({
   setDraft,
   message,
   save,
+  refreshing,
+  refreshMessage,
+  refreshCandidates,
+  choosingCandidate,
+  refresh,
+  chooseCandidate,
   cancel,
 }: {
   book: Book;
@@ -1916,6 +2060,12 @@ function BookEditForm({
   setDraft: React.Dispatch<React.SetStateAction<BookEditDraft>>;
   message: string;
   save: (event: React.FormEvent) => void;
+  refreshing: boolean;
+  refreshMessage: string;
+  refreshCandidates: BookMetadataCandidate[];
+  choosingCandidate: string;
+  refresh: () => void;
+  chooseCandidate: (candidate: BookMetadataCandidate) => void;
   cancel: () => void;
 }) {
   return (
@@ -2019,6 +2169,39 @@ function BookEditForm({
         <Button type="button" variant="ghost" onClick={cancel}>
           Avbryt
         </Button>
+      </div>
+      <div className="mt-8 border-t border-ink/10 pt-5">
+        <button
+          type="button"
+          className="inline-flex items-center gap-2 text-[11px] text-muted transition-colors hover:text-ink"
+          onClick={refresh}
+          disabled={refreshing}
+        >
+          <RefreshCw
+            className={cn(
+              "size-3.5 stroke-[1.3]",
+              refreshing && "animate-spin",
+            )}
+          />
+          {refreshing
+            ? "Hämtar bokinformation…"
+            : "Hämta om bokinformationen"}
+        </button>
+        {refreshMessage && (
+          <p
+            className="mt-3 max-w-sm text-xs leading-relaxed text-muted"
+            role="status"
+          >
+            {refreshMessage}
+          </p>
+        )}
+        {refreshCandidates.length > 0 && (
+          <MetadataCandidateList
+            candidates={refreshCandidates}
+            choosingCandidate={choosingCandidate}
+            onChoose={chooseCandidate}
+          />
+        )}
       </div>
     </form>
   );

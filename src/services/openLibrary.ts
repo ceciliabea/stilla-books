@@ -1,4 +1,5 @@
 import type { Book } from "../types";
+import type { BookCoverCandidate } from "./bookCatalog";
 
 interface OpenLibrarySearchResult {
   key: string;
@@ -33,15 +34,6 @@ export interface BookMetadataCandidate {
   subjects: string[];
   languages: string[];
   safeMatch: boolean;
-}
-
-export interface BookCoverCandidate {
-  id: string;
-  coverUrl: string;
-  title: string;
-  language?: string;
-  publisher?: string;
-  publishDate?: string;
 }
 
 function normalize(value: string) {
@@ -342,6 +334,9 @@ export async function findBookCoverCandidates(
           id: `${edition.key}:${coverId}`,
           coverUrl: `https://covers.openlibrary.org/b/id/${coverId}-L.jpg?default=false`,
           title: edition.title ?? book.title,
+          source: "open_library" as const,
+          sourceLabel: "Open Library",
+          sourceUrl: `https://openlibrary.org${edition.key}`,
           language: editionLanguage(edition),
           publisher: edition.publishers?.[0],
           publishDate: edition.publish_date,
