@@ -1700,7 +1700,11 @@ function BookPanel({
                   ) : (
                     <>
                       <p className="mt-7 font-serif text-lg leading-relaxed text-ink/75">{book.description}</p>
-                      {(book.publisher || book.publishedYear || book.translators?.length) && (
+                      {Boolean(
+                        book.publisher ||
+                          book.publishedYear ||
+                          book.translators?.length,
+                      ) && (
                         <p className="mt-4 text-[11px] leading-relaxed text-muted">
                           {[
                             book.publisher,
