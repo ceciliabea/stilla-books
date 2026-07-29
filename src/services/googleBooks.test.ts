@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Book } from "../types";
 import { findGoogleBookCoverCandidates } from "./googleBooks";
 
@@ -14,8 +14,13 @@ const book: Book = {
   updatedAt: "2026-01-01",
 };
 
+beforeEach(() => {
+  vi.stubEnv("VITE_GOOGLE_API_KEY", "test-api-key");
+});
+
 afterEach(() => {
   vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
 });
 
 describe("Google Books som omslagskälla", () => {
