@@ -22,6 +22,7 @@ const book: Book = {
   startedAt: "2026-07-28",
   createdAt: "2026-07-02",
   updatedAt: "2026-07-28",
+  coverTone: "blue",
 };
 
 afterEach(() => {
@@ -93,7 +94,7 @@ describe("Sheets-synk", () => {
     const booksWrite = body.data.find((entry) => entry.range.startsWith("Books!"));
     const settingsWrite = body.data.find((entry) => entry.range.startsWith("Settings!"));
 
-    expect(booksWrite?.range).toBe("Books!A2:P2");
+    expect(booksWrite?.range).toBe("Books!A2:Q2");
     expect(booksWrite?.values[0][BOOK_HEADERS.indexOf("status")]).toBe("reading");
     expect(settingsWrite?.values[0]).toEqual([new Date().getFullYear(), 12]);
   });
@@ -125,6 +126,67 @@ describe("Sheets-synk", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(String(fetchMock.mock.calls[0][0])).toContain("values:batchGet");
     expect(String(fetchMock.mock.calls[0][0])).not.toContain("batchClear");
+  });
+
+  it("lägger till coverTone-kolumnen utan att skriva om övriga rader", async () => {
+    const legacyHeaders = BOOK_HEADERS.slice(0, -1);
+    const remoteBook = {
+      ...book,
+      coverTone: undefined,
+      updatedAt: "2026-07-27T10:00:00.000Z",
+    };
+    const localBook = {
+      ...book,
+      coverUrl: undefined,
+      coverTone: "sand" as const,
+      updatedAt: "2026-07-29T10:00:00.000Z",
+    };
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            valueRanges: [
+              {
+                values: [
+                  legacyHeaders,
+                  bookToSheetRow(remoteBook).slice(0, -1).map(String),
+                ],
+              },
+              { values: [["year", "readingGoal"]] },
+            ],
+          }),
+          {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({}), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await writeStillaSpreadsheet("token", "sheet-id", [localBook], null);
+
+    const request = fetchMock.mock.calls[1][1] as RequestInit;
+    const body = JSON.parse(String(request.body)) as {
+      data: { range: string; values: (string | boolean | number)[][] }[];
+    };
+    expect(body.data).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          range: "Books!Q1",
+          values: [["coverTone"]],
+        }),
+        expect.objectContaining({
+          range: "Books!A2:Q2",
+        }),
+      ]),
+    );
   });
 
   it("lämnar en nyare fjärrversion av en bok orörd", async () => {

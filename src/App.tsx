@@ -1,6 +1,7 @@
 import * as Dialog from "@radix-ui/react-dialog";
 import * as Tabs from "@radix-ui/react-tabs";
 import {
+  ArrowLeft,
   BookOpen,
   Check,
   ChevronRight,
@@ -22,6 +23,10 @@ import { Button } from "./components/ui/button";
 import { demoBooks } from "./data/demo-books";
 import { getStatusChanges, isDuplicateBook } from "./lib/bookState";
 import {
+  sortBooks,
+  type LibrarySortOrder,
+} from "./lib/bookSorting";
+import {
   clearGoogleAuthorization,
   loadGoogleAuthorization,
   storeGoogleAuthorization,
@@ -42,12 +47,14 @@ import {
   writeStillaSpreadsheet,
 } from "./services/googleSheets";
 import {
+  findBookCoverCandidates,
   findBookMetadataCandidates,
   refreshBookMetadataFromCandidate,
   shortenDescription,
+  type BookCoverCandidate,
   type BookMetadataCandidate,
 } from "./services/openLibrary";
-import type { Book, BookStatus, Feedback } from "./types";
+import type { Book, BookStatus, CoverTone, Feedback } from "./types";
 
 type SyncState = "idle" | "connecting" | "syncing" | "synced" | "error";
 const CURRENT_YEAR = new Date().getFullYear();
@@ -910,7 +917,12 @@ function BookRow({
       <div className="mb-8 flex items-end justify-between">
         <h2 className="font-serif text-3xl tracking-[-0.02em] md:text-4xl">{title}</h2>
         {linkLabel && (
-          <button onClick={onLink} className="text-link hidden sm:flex">{linkLabel}<ChevronRight className="size-4" /></button>
+          <button
+            onClick={onLink}
+            className="text-link ml-4 max-w-32 shrink-0 justify-end text-right sm:max-w-none"
+          >
+            {linkLabel}<ChevronRight className="size-4 shrink-0" />
+          </button>
         )}
       </div>
       <div className="book-scroll">
@@ -925,7 +937,6 @@ function BookRow({
           </article>
         ))}
       </div>
-      {linkLabel && <button onClick={onLink} className="text-link mt-8 sm:hidden">{linkLabel}<ChevronRight className="size-4" /></button>}
     </section>
   );
 }
@@ -944,9 +955,20 @@ function LibraryPage({
   navigate: (page: Page) => void;
 }) {
   const [tab, setTab] = useState<BookStatus>("want_to_read");
+  const [sortOrder, setSortOrder] = useState<LibrarySortOrder>(() => {
+    const saved = localStorage.getItem("stilla-library-sort");
+    return ["recent", "title-asc", "title-desc"].includes(saved ?? "")
+      ? (saved as LibrarySortOrder)
+      : "recent";
+  });
+
+  useEffect(() => {
+    localStorage.setItem("stilla-library-sort", sortOrder);
+  }, [sortOrder]);
+
   const filtered = useMemo(() => {
     const needle = query.toLocaleLowerCase("sv");
-    return books.filter(
+    const matching = books.filter(
       (book) =>
         book.status === tab &&
         (!needle ||
@@ -955,7 +977,8 @@ function LibraryPage({
             .toLocaleLowerCase("sv")
             .includes(needle)),
     );
-  }, [books, query, tab]);
+    return sortBooks(matching, sortOrder);
+  }, [books, query, sortOrder, tab]);
 
   return (
     <div className="page-shell pb-24 pt-12 md:pt-20">
@@ -984,6 +1007,27 @@ function LibraryPage({
             </Tabs.Trigger>
           ))}
         </Tabs.List>
+        <div className="sort-control" aria-label="Sortera biblioteket">
+          <span>Ordning</span>
+          {[
+            ["recent", "Senast tillagd"],
+            ["title-asc", "A–Ö"],
+            ["title-desc", "Ö–A"],
+          ].map(([value, label]) => (
+            <button
+              key={value}
+              type="button"
+              className="sort-option"
+              data-active={sortOrder === value}
+              aria-pressed={sortOrder === value}
+              onClick={() =>
+                setSortOrder(value as LibrarySortOrder)
+              }
+            >
+              {label}
+            </button>
+          ))}
+        </div>
         <Tabs.Content value={tab} className="mt-12 outline-none">
           {filtered.length ? (
             <div className="library-grid">
@@ -1282,7 +1326,6 @@ function SettingsPage({
 interface BookEditDraft {
   title: string;
   authors: string;
-  coverUrl: string;
   description: string;
   genres: string;
   finishedAt: string;
@@ -1319,10 +1362,16 @@ function BookPanel({
   const [choosingCandidate, setChoosingCandidate] = useState("");
   const [editing, setEditing] = useState(false);
   const [editMessage, setEditMessage] = useState("");
+  const [coverPickerOpen, setCoverPickerOpen] = useState(false);
+  const [coverCandidates, setCoverCandidates] = useState<
+    BookCoverCandidate[]
+  >([]);
+  const [loadingCovers, setLoadingCovers] = useState(false);
+  const [coverMessage, setCoverMessage] = useState("");
+  const [customCoverUrl, setCustomCoverUrl] = useState("");
   const [draft, setDraft] = useState<BookEditDraft>({
     title: "",
     authors: "",
-    coverUrl: "",
     description: "",
     genres: "",
     finishedAt: "",
@@ -1335,6 +1384,11 @@ function BookPanel({
     setChoosingCandidate("");
     setEditing(false);
     setEditMessage("");
+    setCoverPickerOpen(false);
+    setCoverCandidates([]);
+    setLoadingCovers(false);
+    setCoverMessage("");
+    setCustomCoverUrl("");
   }, [book?.id]);
 
   function beginEditing() {
@@ -1342,7 +1396,6 @@ function BookPanel({
     setDraft({
       title: book.title,
       authors: book.authors.join(", "),
-      coverUrl: book.coverUrl ?? "",
       description: book.description,
       genres: book.genres.join(", "),
       finishedAt: book.finishedAt ?? "",
@@ -1363,16 +1416,9 @@ function BookPanel({
       setEditMessage("Titel och minst en författare behöver finnas.");
       return;
     }
-    const coverUrl = draft.coverUrl.trim();
-    if (coverUrl && !coverUrl.toLocaleLowerCase("sv").startsWith("https://")) {
-      setEditMessage("Länken till omslaget behöver börja med https://.");
-      return;
-    }
-
     const saved = await updateBook(book.id, {
       title,
       authors,
-      coverUrl: coverUrl || undefined,
       description: draft.description.trim(),
       genres: draft.genres
         .split(",")
@@ -1388,6 +1434,51 @@ function BookPanel({
     } else {
       setEditMessage("Ändringarna kunde inte sparas i Google Sheet.");
     }
+  }
+
+  async function openCoverPicker() {
+    if (!book) return;
+    setCoverPickerOpen(true);
+    setLoadingCovers(true);
+    setCoverMessage("");
+    setCustomCoverUrl(book.coverUrl ?? "");
+    try {
+      const candidates = await findBookCoverCandidates(book);
+      setCoverCandidates(candidates.slice(0, 4));
+      if (!candidates.length) {
+        setCoverMessage(
+          "Inga tydliga utgåveomslag hittades. Du kan välja ett av Stillas omslag eller använda en egen bild.",
+        );
+      }
+    } catch {
+      setCoverCandidates([]);
+      setCoverMessage(
+        "Omslagskatalogen kunde inte nås just nu. Du kan fortfarande välja ett Stilla-omslag eller använda en egen bild.",
+      );
+    } finally {
+      setLoadingCovers(false);
+    }
+  }
+
+  async function chooseCover(changes: Pick<Book, "coverUrl" | "coverTone">) {
+    if (!book) return;
+    const saved = await updateBook(book.id, changes);
+    if (saved) {
+      setCoverPickerOpen(false);
+      setCoverMessage("");
+    } else {
+      setCoverMessage("Omslaget kunde inte sparas i Google Sheet.");
+    }
+  }
+
+  async function saveCustomCover(event: React.FormEvent) {
+    event.preventDefault();
+    const coverUrl = customCoverUrl.trim();
+    if (!coverUrl.toLocaleLowerCase("sv").startsWith("https://")) {
+      setCoverMessage("Länken till omslaget behöver börja med https://.");
+      return;
+    }
+    await chooseCover({ coverUrl, coverTone: undefined });
   }
 
   async function handleRefresh() {
@@ -1449,8 +1540,41 @@ function BookPanel({
           {book && (
             <>
               <Dialog.Close className="dialog-close" aria-label="Stäng"><X className="size-5 stroke-[1.3]" /></Dialog.Close>
+              {coverPickerOpen ? (
+                <CoverPicker
+                  book={book}
+                  candidates={coverCandidates}
+                  loading={loadingCovers}
+                  message={coverMessage}
+                  customCoverUrl={customCoverUrl}
+                  setCustomCoverUrl={setCustomCoverUrl}
+                  onBack={() => setCoverPickerOpen(false)}
+                  onChooseCover={(coverUrl) =>
+                    chooseCover({ coverUrl, coverTone: undefined })
+                  }
+                  onChooseTone={(coverTone) =>
+                    chooseCover({ coverUrl: undefined, coverTone })
+                  }
+                  onSaveCustom={saveCustomCover}
+                  onBrokenCandidate={(id) =>
+                    setCoverCandidates((current) =>
+                      current.filter((candidate) => candidate.id !== id),
+                    )
+                  }
+                />
+              ) : (
               <div className="book-dialog-grid">
-                <BookCover book={book} className="mx-auto w-40 md:w-full" />
+                <button
+                  type="button"
+                  className="group relative mx-auto w-40 self-start rounded-[3px] text-left md:w-full"
+                  onClick={openCoverPicker}
+                  aria-label={`Byt omslag till ${book.title}`}
+                >
+                  <BookCover book={book} className="w-full" />
+                  <span className="absolute inset-x-3 bottom-3 rounded-full bg-paper/95 px-3 py-2 text-center text-[11px] text-ink opacity-100 shadow-sm transition-opacity md:opacity-0 md:group-hover:opacity-100 md:group-focus-visible:opacity-100">
+                    Byt omslag
+                  </span>
+                </button>
                 <div className="flex flex-col">
                   <p className="eyebrow">{statusLabel[book.status]}</p>
                   <div className="mt-3 flex items-start gap-3">
@@ -1496,88 +1620,6 @@ function BookPanel({
                   )}
                   {!editing && (
                     <>
-                      <div className="mt-6">
-                        <Button
-                          variant="ghost"
-                          className="-ml-3"
-                          onClick={handleRefresh}
-                          disabled={refreshing}
-                        >
-                          <RefreshCw
-                            className={cn(
-                              "size-4 stroke-[1.4]",
-                              refreshing && "animate-spin",
-                            )}
-                          />
-                          {refreshing
-                            ? "Hämtar bokinformation…"
-                            : "Hämta om bokinformationen"}
-                        </Button>
-                        {refreshMessage && (
-                          <p
-                            className="mt-2 max-w-sm text-xs leading-relaxed text-muted"
-                            role="status"
-                          >
-                            {refreshMessage}
-                          </p>
-                        )}
-                        {refreshCandidates.length > 0 && (
-                          <div className="mt-5 divide-y divide-ink/10 border-y border-ink/10">
-                            {refreshCandidates.map((candidate) => {
-                              const details = [
-                                candidate.firstPublishYear,
-                                ...candidate.languages
-                                  .slice(0, 2)
-                                  .map(languageLabel),
-                              ].filter(Boolean);
-                              return (
-                                <article
-                                  key={candidate.key}
-                                  className="flex items-center gap-4 py-4"
-                                >
-                                  {candidate.coverUrl ? (
-                                    <img
-                                      src={candidate.coverUrl}
-                                      alt=""
-                                      className="aspect-[2/3] w-12 shrink-0 rounded-[2px] object-cover"
-                                    />
-                                  ) : (
-                                    <div className="flex aspect-[2/3] w-12 shrink-0 items-center justify-center rounded-[2px] bg-paper-soft">
-                                      <BookOpen className="size-4 stroke-[1] text-muted" />
-                                    </div>
-                                  )}
-                                  <div className="min-w-0 flex-1">
-                                    <p className="font-serif text-lg leading-tight">
-                                      {candidate.title}
-                                    </p>
-                                    <p className="mt-1 text-xs leading-relaxed text-muted">
-                                      {candidate.authors.join(", ") ||
-                                        "Okänd författare"}
-                                    </p>
-                                    {details.length > 0 && (
-                                      <p className="mt-1 text-[11px] text-muted">
-                                        {details.join(" · ")}
-                                      </p>
-                                    )}
-                                  </div>
-                                  <Button
-                                    variant="secondary"
-                                    className="shrink-0"
-                                    disabled={Boolean(choosingCandidate)}
-                                    onClick={() =>
-                                      handleCandidateChoice(candidate)
-                                    }
-                                  >
-                                    {choosingCandidate === candidate.key
-                                      ? "Hämtar…"
-                                      : "Välj"}
-                                  </Button>
-                                </article>
-                              );
-                            })}
-                          </div>
-                        )}
-                      </div>
                       <div className="mt-8 flex flex-wrap gap-2">
                         {book.status !== "want_to_read" && <Button variant="secondary" onClick={() => changeStatus(book, "want_to_read")}>Vill läsa</Button>}
                         {book.status !== "reading" && <Button variant="secondary" onClick={() => changeStatus(book, "reading")}>Läser</Button>}
@@ -1592,8 +1634,38 @@ function BookPanel({
                           <FeedbackButtons book={book} onFeedback={(feedback) => updateBook(book.id, { feedback })} />
                         </div>
                       )}
+                      <div className="mt-10 border-t border-ink/10 pt-5">
+                        <button
+                          type="button"
+                          className="inline-flex items-center gap-2 text-[11px] text-muted transition-colors hover:text-ink"
+                          onClick={handleRefresh}
+                          disabled={refreshing}
+                        >
+                          <RefreshCw
+                            className={cn(
+                              "size-3.5 stroke-[1.3]",
+                              refreshing && "animate-spin",
+                            )}
+                          />
+                          {refreshing
+                            ? "Hämtar bokinformation…"
+                            : "Hämta om bokinformationen"}
+                        </button>
+                        {refreshMessage && (
+                          <p className="mt-3 max-w-sm text-xs leading-relaxed text-muted" role="status">
+                            {refreshMessage}
+                          </p>
+                        )}
+                        {refreshCandidates.length > 0 && (
+                          <MetadataCandidateList
+                            candidates={refreshCandidates}
+                            choosingCandidate={choosingCandidate}
+                            onChoose={handleCandidateChoice}
+                          />
+                        )}
+                      </div>
                       <button
-                        className="mt-10 self-start text-xs text-muted underline decoration-ink/20 underline-offset-4 hover:text-ink"
+                        className="mt-6 self-start text-xs text-muted underline decoration-ink/20 underline-offset-4 hover:text-ink"
                         onClick={async () => {
                           if (window.confirm("Ta bort boken från ditt bibliotek? Den kan återställas senare.")) {
                             const saved = await updateBook(book.id, { archived: true });
@@ -1607,11 +1679,227 @@ function BookPanel({
                   )}
                 </div>
               </div>
+              )}
             </>
           )}
         </Dialog.Content>
       </Dialog.Portal>
     </Dialog.Root>
+  );
+}
+
+const coverToneLabels: Record<CoverTone, string> = {
+  sage: "Salvia",
+  sand: "Sand",
+  blue: "Blågrå",
+  clay: "Lera",
+  ink: "Bläck",
+};
+
+function CoverPicker({
+  book,
+  candidates,
+  loading,
+  message,
+  customCoverUrl,
+  setCustomCoverUrl,
+  onBack,
+  onChooseCover,
+  onChooseTone,
+  onSaveCustom,
+  onBrokenCandidate,
+}: {
+  book: Book;
+  candidates: BookCoverCandidate[];
+  loading: boolean;
+  message: string;
+  customCoverUrl: string;
+  setCustomCoverUrl: (value: string) => void;
+  onBack: () => void;
+  onChooseCover: (coverUrl: string) => void;
+  onChooseTone: (tone: CoverTone) => void;
+  onSaveCustom: (event: React.FormEvent) => void;
+  onBrokenCandidate: (id: string) => void;
+}) {
+  const toneOrder: CoverTone[] = ["sage", "sand", "blue", "clay", "ink"];
+  const shownCandidates = candidates.slice(0, 4);
+  const shownTones = toneOrder.slice(
+    0,
+    Math.min(5, Math.max(2, 6 - shownCandidates.length)),
+  );
+  const cleanUrl = (value?: string) => value?.split("?")[0];
+
+  return (
+    <section className="mt-8">
+      <button
+        type="button"
+        className="text-link text-xs"
+        onClick={onBack}
+      >
+        <ArrowLeft className="size-4 stroke-[1.3]" />
+        Tillbaka till boken
+      </button>
+      <p className="eyebrow mt-9">Omslag</p>
+      <Dialog.Title className="mt-3 font-serif text-4xl tracking-[-0.025em] md:text-5xl">
+        Välj det som känns rätt.
+      </Dialog.Title>
+      <Dialog.Description className="mt-3 max-w-xl text-sm leading-relaxed text-muted">
+        Förslagen kommer från olika utgåvor av boken. Ditt val ligger kvar när
+        annan bokinformation uppdateras.
+      </Dialog.Description>
+
+      {loading ? (
+        <div className="mt-10 flex items-center gap-3 text-sm text-muted">
+          <RefreshCw className="size-4 animate-spin stroke-[1.3]" />
+          Letar efter varsamt valda utgåvor…
+        </div>
+      ) : (
+        <>
+          <div className="cover-choice-grid mt-10">
+            {shownCandidates.map((candidate) => {
+              const selected =
+                cleanUrl(book.coverUrl) === cleanUrl(candidate.coverUrl);
+              const details = [
+                candidate.publisher,
+                candidate.publishDate,
+                candidate.language
+                  ? languageLabel(candidate.language)
+                  : undefined,
+              ].filter(Boolean);
+              return (
+                <button
+                  key={candidate.id}
+                  type="button"
+                  className="cover-choice"
+                  data-selected={selected}
+                  aria-pressed={selected}
+                  onClick={() => onChooseCover(candidate.coverUrl)}
+                >
+                  <img
+                    src={candidate.coverUrl}
+                    alt={`Omslagsförslag till ${book.title}`}
+                    className="aspect-[2/3] w-full rounded-[3px] object-cover"
+                    onLoad={(event) => {
+                      if (
+                        event.currentTarget.naturalWidth < 120 ||
+                        event.currentTarget.naturalHeight < 180
+                      ) {
+                        onBrokenCandidate(candidate.id);
+                      }
+                    }}
+                    onError={() => onBrokenCandidate(candidate.id)}
+                  />
+                  <span className="mt-3 block font-serif text-base leading-tight">
+                    {candidate.title}
+                  </span>
+                  {details.length > 0 && (
+                    <span className="mt-1 block text-[10px] leading-relaxed text-muted">
+                      {details.join(" · ")}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+            {shownTones.map((tone) => {
+              const selected =
+                !book.coverUrl && (book.coverTone ?? "sage") === tone;
+              return (
+                <button
+                  key={tone}
+                  type="button"
+                  className="cover-choice"
+                  data-selected={selected}
+                  aria-pressed={selected}
+                  onClick={() => onChooseTone(tone)}
+                >
+                  <BookCover
+                    book={{ ...book, coverUrl: undefined, coverTone: tone }}
+                    className="w-full"
+                  />
+                  <span className="mt-3 block font-serif text-base">
+                    Stilla · {coverToneLabels[tone]}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+          {message && (
+            <p className="mt-6 max-w-xl text-xs leading-relaxed text-muted" role="status">
+              {message}
+            </p>
+          )}
+        </>
+      )}
+
+      <form
+        className="mt-10 border-t border-ink/10 pt-7"
+        onSubmit={onSaveCustom}
+      >
+        <label className="text-xs tracking-wide text-muted">
+          Använd egen bild
+          <div className="mt-2 flex flex-col gap-2 sm:flex-row">
+            <input
+              type="url"
+              inputMode="url"
+              className="edit-field mt-0 min-w-0 flex-1"
+              value={customCoverUrl}
+              onChange={(event) => setCustomCoverUrl(event.target.value)}
+              placeholder="https://exempel.se/omslag.jpg"
+            />
+            <Button type="submit" variant="secondary">
+              Använd bilden
+            </Button>
+          </div>
+        </label>
+      </form>
+    </section>
+  );
+}
+
+function MetadataCandidateList({
+  candidates,
+  choosingCandidate,
+  onChoose,
+}: {
+  candidates: BookMetadataCandidate[];
+  choosingCandidate: string;
+  onChoose: (candidate: BookMetadataCandidate) => void;
+}) {
+  return (
+    <div className="mt-5 divide-y divide-ink/10 border-y border-ink/10">
+      {candidates.map((candidate) => {
+        const details = [
+          candidate.firstPublishYear,
+          ...candidate.languages.slice(0, 2).map(languageLabel),
+        ].filter(Boolean);
+        return (
+          <article key={candidate.key} className="flex items-center gap-4 py-4">
+            <BookOpen className="size-4 shrink-0 stroke-[1] text-muted" />
+            <div className="min-w-0 flex-1">
+              <p className="font-serif text-lg leading-tight">
+                {candidate.title}
+              </p>
+              <p className="mt-1 text-xs leading-relaxed text-muted">
+                {candidate.authors.join(", ") || "Okänd författare"}
+              </p>
+              {details.length > 0 && (
+                <p className="mt-1 text-[11px] text-muted">
+                  {details.join(" · ")}
+                </p>
+              )}
+            </div>
+            <Button
+              variant="secondary"
+              className="shrink-0"
+              disabled={Boolean(choosingCandidate)}
+              onClick={() => onChoose(candidate)}
+            >
+              {choosingCandidate === candidate.key ? "Hämtar…" : "Välj"}
+            </Button>
+          </article>
+        );
+      })}
+    </div>
   );
 }
 
@@ -1675,67 +1963,47 @@ function BookEditForm({
             }
           />
         </label>
-        <label className="text-xs tracking-wide text-muted">
-          Eget omslag
-          <input
-            type="url"
-            inputMode="url"
-            className="edit-field"
-            value={draft.coverUrl}
-            onChange={(event) =>
-              setDraft((current) => ({
-                ...current,
-                coverUrl: event.target.value,
-              }))
-            }
-            placeholder="https://exempel.se/omslag.jpg"
-          />
-          <span className="mt-2 block leading-relaxed">
-            Klistra in en direktlänk till bilden. Lämna tomt för Stillas illustrerade omslag.
-          </span>
-        </label>
-        {draft.coverUrl.toLocaleLowerCase("sv").startsWith("https://") && (
-          <div>
-            <p className="text-xs tracking-wide text-muted">Förhandsvisning</p>
-            <img
-              src={draft.coverUrl}
-              alt="Förhandsvisning av eget omslag"
-              className="mt-2 aspect-[2/3] w-20 rounded-[3px] object-cover shadow-[0_8px_20px_rgba(46,46,44,0.1)]"
-            />
-          </div>
-        )}
-        <label className="text-xs tracking-wide text-muted">
-          Genrer
-          <input
-            className="edit-field"
-            value={draft.genres}
-            onChange={(event) =>
-              setDraft((current) => ({
-                ...current,
-                genres: event.target.value,
-              }))
-            }
-            placeholder="Roman, poesi"
-          />
-        </label>
-        {book.status === "read" && (
+        <div
+          className={cn(
+            "grid gap-5",
+            book.status === "read" && "sm:grid-cols-[minmax(0,1fr)_180px]",
+          )}
+        >
           <label className="text-xs tracking-wide text-muted">
-            Utläst datum
+            Genrer
             <input
-              type="date"
               className="edit-field"
-              value={draft.finishedAt}
+              value={draft.genres}
               onChange={(event) =>
                 setDraft((current) => ({
                   ...current,
-                  finishedAt: event.target.value,
+                  genres: event.target.value,
                 }))
               }
+              placeholder="Roman, poesi"
             />
-            <span className="mt-2 block leading-relaxed">
-              Året i datumet avgör vilket års läsmål boken räknas till.
-            </span>
           </label>
+          {book.status === "read" && (
+            <label className="text-xs tracking-wide text-muted">
+              Utläst datum
+              <input
+                type="date"
+                className="edit-field"
+                value={draft.finishedAt}
+                onChange={(event) =>
+                  setDraft((current) => ({
+                    ...current,
+                    finishedAt: event.target.value,
+                  }))
+                }
+              />
+            </label>
+          )}
+        </div>
+        {book.status === "read" && (
+          <p className="-mt-2 text-[11px] leading-relaxed text-muted">
+            Året i datumet avgör vilket års läsmål boken räknas till.
+          </p>
         )}
       </div>
       {message && (

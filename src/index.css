@@ -44,6 +44,12 @@ button:focus-visible, a:focus-visible { outline:2px solid #a8b69a; outline-offse
 .tab-trigger { @apply relative flex items-center gap-2 whitespace-nowrap px-4 pb-4 pt-2 text-sm text-muted outline-none transition-colors data-[state=active]:text-ink; }
 .tab-trigger::after { content:""; @apply absolute inset-x-3 bottom-0 h-px scale-x-0 bg-gold transition-transform data-[state=active]:scale-x-100; }
 .tab-trigger span { @apply text-[10px] text-muted; }
+.sort-control { @apply mt-5 flex flex-wrap items-center justify-end gap-x-1 gap-y-2 text-[11px] text-muted; }
+.sort-control > span { @apply mr-2 uppercase tracking-[0.14em] text-muted/80; }
+.sort-option { @apply relative px-2 py-1 text-muted transition-colors hover:text-ink; }
+.sort-option::after { content:""; @apply absolute inset-x-2 bottom-0 h-px scale-x-0 bg-sage transition-transform; }
+.sort-option[data-active="true"] { @apply text-ink; }
+.sort-option[data-active="true"]::after { @apply scale-x-100; }
 .library-grid { @apply grid grid-cols-2 items-start gap-x-5 gap-y-12 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 lg:gap-x-8; }
 .book-tile { @apply flex w-full self-start flex-col items-stretch text-left outline-none transition-transform duration-200 hover:-translate-y-1 focus-visible:ring-2 focus-visible:ring-sage; }
 .search-results { @apply mx-auto grid max-w-4xl gap-px overflow-hidden rounded-2xl border border-ink/10 bg-ink/10; }
@@ -56,6 +62,10 @@ button:focus-visible, a:focus-visible { outline:2px solid #a8b69a; outline-offse
 .dialog-overlay { @apply fixed inset-0 z-[60] bg-ink/20 backdrop-blur-[2px] data-[state=open]:animate-[fadeIn_.2s_ease-out]; }
 .book-dialog { @apply fixed inset-x-0 bottom-0 z-[70] max-h-[92vh] overflow-y-auto rounded-t-[28px] bg-paper p-7 shadow-[0_-20px_80px_rgba(46,46,44,.12)] outline-none data-[state=open]:animate-[slideUp_.32s_ease-out] md:inset-y-0 md:left-auto md:right-0 md:max-h-none md:w-[min(760px,90vw)] md:rounded-none md:p-12 md:data-[state=open]:animate-[slideLeft_.32s_ease-out]; }
 .book-dialog-grid { @apply mt-8 grid gap-9 md:grid-cols-[210px_1fr] md:gap-12; }
+.cover-choice-grid { @apply grid grid-cols-2 items-start gap-x-5 gap-y-8 sm:grid-cols-3; }
+.cover-choice { @apply relative rounded-[5px] border border-transparent p-1.5 text-left outline-none transition-colors hover:border-ink/15 focus-visible:ring-2 focus-visible:ring-sage; }
+.cover-choice[data-selected="true"] { @apply border-sage bg-sage/[0.08]; }
+.cover-choice[data-selected="true"]::after { content:"Valt"; @apply absolute right-3 top-3 rounded-full bg-paper/95 px-2.5 py-1 text-[9px] uppercase tracking-[0.12em] text-ink shadow-sm; }
 .dialog-close { @apply absolute right-6 top-6 flex size-9 items-center justify-center rounded-full border border-ink/10 text-muted transition-colors hover:text-ink; }
 .celebration-dialog { @apply fixed left-1/2 top-1/2 z-[70] w-[min(520px,calc(100vw-32px))] -translate-x-1/2 -translate-y-1/2 rounded-[28px] bg-paper p-9 text-center shadow-[0_24px_100px_rgba(46,46,44,.16)] outline-none data-[state=open]:animate-[softAppear_.45s_ease-out] md:p-14; }
 .celebration-dialog .eyebrow { @apply mt-6; }

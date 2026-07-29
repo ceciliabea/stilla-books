@@ -1,8 +1,8 @@
 import { BookOpen } from "lucide-react";
 import { cn } from "../lib/utils";
-import type { Book } from "../types";
+import type { Book, CoverTone } from "../types";
 
-const tones = {
+const coverTones: Record<CoverTone, string> = {
   sage: "from-[#7f8e75] to-[#b3bda9] text-[#f7f4ec]",
   clay: "from-[#a66f5c] to-[#d2a18d] text-[#fff8ef]",
   ink: "from-[#343a3b] to-[#697272] text-[#faf8f3]",
@@ -38,7 +38,7 @@ export function BookCover({
     <div
       className={cn(
         "relative flex aspect-[2/3] shrink-0 flex-col overflow-hidden rounded-[3px] bg-gradient-to-br p-4 shadow-[0_12px_28px_rgba(46,46,44,0.12)]",
-        tones[book.coverTone ?? "sage"],
+        coverTones[book.coverTone ?? "sage"],
         className,
       )}
       aria-label={`Illustrerat omslag till ${book.title}`}

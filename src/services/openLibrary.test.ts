@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Book } from "../types";
 import {
+  findBookCoverCandidates,
   findBookMetadataCandidates,
   refreshBookMetadata,
 } from "./openLibrary";
@@ -24,7 +25,7 @@ afterEach(() => {
 });
 
 describe("uppdatering från Open Library", () => {
-  it("prioriterar en svensk träff med omslag", async () => {
+  it("prioriterar en svensk träff utan att ändra omslaget", async () => {
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce({
@@ -55,8 +56,8 @@ describe("uppdatering från Open Library", () => {
 
     expect(metadata).toMatchObject({
       externalId: "/works/OL-SV",
-      coverUrl: "https://covers.openlibrary.org/b/id/20-L.jpg",
     });
+    expect(metadata).not.toHaveProperty("coverUrl");
     expect(metadata).not.toHaveProperty("genres");
     expect(String(fetchMock.mock.calls[0][0])).toContain("lang=sv");
     expect(fetchMock).toHaveBeenCalledTimes(1);
@@ -166,7 +167,7 @@ describe("uppdatering från Open Library", () => {
     expect(metadata).not.toHaveProperty("description");
   });
 
-  it("hämtar engelsk utgåva när titeln tydligt är engelsk", async () => {
+  it("söker på engelska utan att låta metadata ändra omslaget", async () => {
     const fetchMock = vi.fn().mockResolvedValueOnce({
       ok: true,
       json: async () => ({
@@ -191,8 +192,71 @@ describe("uppdatering från Open Library", () => {
     });
 
     expect(String(fetchMock.mock.calls[0][0])).toContain("lang=en");
-    expect(metadata?.coverUrl).toBe(
-      "https://covers.openlibrary.org/b/id/55-L.jpg",
+    expect(metadata).not.toHaveProperty("coverUrl");
+  });
+
+  it("hämtar unika omslag från bokens engelska utgåvor", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          docs: [
+            {
+              key: "/works/OL59038W",
+              title: "Never Let Me Go",
+              author_name: ["Kazuo Ishiguro"],
+              language: ["eng"],
+            },
+          ],
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          entries: [
+            {
+              key: "/books/OL-EN",
+              title: "Never Let Me Go",
+              covers: [8740419],
+              languages: [{ key: "/languages/eng" }],
+              publishers: ["Faber & Faber"],
+              publish_date: "2006",
+            },
+            {
+              key: "/books/OL-DUPLICATE",
+              title: "Never Let Me Go",
+              covers: [8740419],
+              languages: [{ key: "/languages/eng" }],
+            },
+            {
+              key: "/books/OL-ES",
+              title: "Nunca me abandones",
+              covers: [1047334],
+              languages: [{ key: "/languages/spa" }],
+            },
+          ],
+        }),
+      });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const candidates = await findBookCoverCandidates({
+      ...book,
+      externalId: "/works/OL59038W",
+      title: "Never Let Me Go",
+      authors: ["Kazuo Ishiguro"],
+      coverUrl: "https://example.com/selected.jpg",
+    });
+
+    expect(candidates).toHaveLength(2);
+    expect(candidates[0]).toMatchObject({
+      coverUrl:
+        "https://covers.openlibrary.org/b/id/8740419-L.jpg?default=false",
+      language: "eng",
+      publisher: "Faber & Faber",
+    });
+    expect(String(fetchMock.mock.calls[1][0])).toContain(
+      "/works/OL59038W/editions.json",
     );
   });
 });

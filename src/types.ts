@@ -1,5 +1,6 @@
 export type BookStatus = "want_to_read" | "reading" | "read";
 export type Feedback = "not_for_me" | "liked" | "loved";
+export type CoverTone = "sage" | "clay" | "ink" | "sand" | "blue";
 
 export interface Book {
   id: string;
@@ -18,5 +19,5 @@ export interface Book {
   finishedAt?: string;
   createdAt: string;
   updatedAt: string;
-  coverTone?: "sage" | "clay" | "ink" | "sand" | "blue";
+  coverTone?: CoverTone;
 }

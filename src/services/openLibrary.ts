@@ -10,8 +10,19 @@ interface OpenLibrarySearchResult {
   language?: string[];
 }
 
-export type RefreshedBookMetadata = Pick<Book, "externalId" | "title" | "authors"> &
-  Partial<Pick<Book, "coverUrl" | "description" | "genres" | "language">>;
+interface OpenLibraryEdition {
+  key: string;
+  title?: string;
+  covers?: number[];
+  languages?: { key: string }[];
+  publishers?: string[];
+  publish_date?: string;
+}
+
+export type RefreshedBookMetadata = Pick<
+  Book,
+  "externalId" | "title" | "authors"
+>;
 
 export interface BookMetadataCandidate {
   key: string;
@@ -22,6 +33,15 @@ export interface BookMetadataCandidate {
   subjects: string[];
   languages: string[];
   safeMatch: boolean;
+}
+
+export interface BookCoverCandidate {
+  id: string;
+  coverUrl: string;
+  title: string;
+  language?: string;
+  publisher?: string;
+  publishDate?: string;
 }
 
 function normalize(value: string) {
@@ -111,6 +131,11 @@ function inferTitleLanguage(title: string) {
       "with",
       "my",
       "our",
+      "me",
+      "you",
+      "never",
+      "let",
+      "go",
       "who",
       "when",
       "where",
@@ -237,23 +262,93 @@ export async function findBookMetadataCandidates(
 export async function refreshBookMetadataFromCandidate(
   book: Book,
   candidate: BookMetadataCandidate,
-  preferredLanguage = inferTitleLanguage(book.title),
 ): Promise<RefreshedBookMetadata> {
-  const wantedLanguage = languageCode(preferredLanguage);
-  const candidateMatchesLanguage =
-    candidate.languages.length === 0 ||
-    !wantedLanguage ||
-    candidate.languages.includes(wantedLanguage);
-  const coverUrl = candidateMatchesLanguage
-    ? candidate.coverUrl
-    : undefined;
-
   return {
     externalId: candidate.key,
     title: candidate.title,
     authors: candidate.authors.length ? candidate.authors : book.authors,
-    ...(coverUrl ? { coverUrl } : {}),
   };
+}
+
+function editionLanguage(edition: OpenLibraryEdition) {
+  return edition.languages?.[0]?.key.replace("/languages/", "");
+}
+
+function editionScore(
+  edition: OpenLibraryEdition,
+  book: Book,
+  preferredLanguage: string,
+) {
+  const title = normalize(edition.title ?? "");
+  const wantedTitle = normalize(book.title);
+  const language = editionLanguage(edition);
+  let score = 0;
+  if (title === wantedTitle) score += 6;
+  else if (title.includes(wantedTitle) || wantedTitle.includes(title)) score += 2;
+  if (language === preferredLanguage) score += 7;
+  if (!language) score += 1;
+  if (edition.publishers?.length) score += 1;
+  if (edition.publish_date) score += 1;
+  return score;
+}
+
+export async function findBookCoverCandidates(
+  book: Book,
+): Promise<BookCoverCandidate[]> {
+  const metadataCandidates = await findBookMetadataCandidates(book);
+  const workKeys = [
+    ...(book.externalId?.startsWith("/works/") ? [book.externalId] : []),
+    ...metadataCandidates
+      .filter((candidate) => candidate.safeMatch)
+      .map((candidate) => candidate.key),
+  ]
+    .filter((key, index, keys) => keys.indexOf(key) === index)
+    .slice(0, 2);
+
+  if (!workKeys.length) return [];
+
+  const preferredLanguage = languageCode(inferTitleLanguage(book.title)) ?? "swe";
+  const editions = (
+    await Promise.all(
+      workKeys.map(async (workKey) => {
+        const response = await fetch(
+          `https://openlibrary.org${workKey}/editions.json?limit=50`,
+        );
+        if (!response.ok) return [];
+        const data = (await response.json()) as {
+          entries?: OpenLibraryEdition[];
+        };
+        return data.entries ?? [];
+      }),
+    )
+  ).flat();
+
+  const seenCovers = new Set<number>();
+  return editions
+    .filter((edition) => edition.covers?.some((cover) => cover > 0))
+    .sort(
+      (a, b) =>
+        editionScore(b, book, preferredLanguage) -
+        editionScore(a, book, preferredLanguage),
+    )
+    .flatMap((edition) => {
+      const coverId = edition.covers?.find(
+        (cover) => cover > 0 && !seenCovers.has(cover),
+      );
+      if (!coverId) return [];
+      seenCovers.add(coverId);
+      return [
+        {
+          id: `${edition.key}:${coverId}`,
+          coverUrl: `https://covers.openlibrary.org/b/id/${coverId}-L.jpg?default=false`,
+          title: edition.title ?? book.title,
+          language: editionLanguage(edition),
+          publisher: edition.publishers?.[0],
+          publishDate: edition.publish_date,
+        },
+      ];
+    })
+    .slice(0, 6);
 }
 
 export async function refreshBookMetadata(
@@ -269,7 +364,6 @@ export async function refreshBookMetadata(
     ? refreshBookMetadataFromCandidate(
         book,
         safeCandidate,
-        preferredLanguage,
       )
     : null;
 }
